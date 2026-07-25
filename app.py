@@ -159,7 +159,6 @@ def generate_sistema_ridotto_smart(scores, n_pool=12, max_sestine=8):
             filtered.append(sorted(c))
             
     if len(filtered) > max_sestine:
-        random.seed(42)
         selected_sestine = random.sample(filtered, max_sestine)
     else:
         selected_sestine = filtered if filtered else [sorted(c) for c in all_combs[:max_sestine]]
