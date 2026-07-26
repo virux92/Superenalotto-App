@@ -1,1 +1,1 @@
-"""Motore statistico e combinatorio del progetto SuperEnalotto."""
+"""Motore quantitativo: metriche, analytics, combinazioni e backtest."""

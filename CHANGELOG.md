@@ -15,3 +15,11 @@
 - Estratto il backtest walk-forward in `core/backtest.py`.
 - `app.py` conserva la UI e usa il motore tramite import stabili.
 - Nessuna modifica alle formule o al comportamento della v2.0.
+
+## v2.2 — Statistiche avanzate e validazione
+- Creato `core/analytics.py` con strutture, decine, entropia, coppie, terzine, ripetizioni e stabilità annuale.
+- Estratte le operazioni sulle estrazioni in `services/draw_service.py`.
+- Aggiunto hash SHA-256 canonico dell'archivio e confronto Supabase/CSV.
+- Aggiunto benchmark casuale deterministico e riproducibile al backtest.
+- Aggiunte deviazione standard, intervallo di confidenza e stabilità annuale.
+- Aggiunta suite di test automatici per archivio, metriche, analytics e assenza di future leakage.

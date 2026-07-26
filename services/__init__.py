@@ -1,1 +1,1 @@
-"""Servizi applicativi del progetto SuperEnalotto."""
+"""Servizi applicativi e accesso all'archivio."""
