@@ -11,6 +11,8 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from database import fetch_draws
+
 
 APP_TITLE = "SuperEnalotto — Analisi statistica e sistemi"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
@@ -147,6 +149,22 @@ def load_repository_archive(path_text: str) -> pd.DataFrame:
             "File estrazioni.csv non trovato. Caricalo nella stessa cartella di app.py."
         )
     return read_csv_flexible(path)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_primary_archive(path_text: str) -> tuple[pd.DataFrame, str, str | None]:
+    """Carica Supabase come fonte primaria, con fallback sicuro al CSV GitHub."""
+    database_error: str | None = None
+    try:
+        database_frame = fetch_draws()
+        if not database_frame.empty:
+            return validate_archive_dataframe(database_frame), "Supabase", None
+        database_error = "La tabella estrazioni di Supabase è vuota."
+    except Exception as exc:
+        database_error = str(exc)
+
+    repository_frame = load_repository_archive(path_text)
+    return repository_frame, "CSV del repository (fallback)", database_error
 
 
 def archive_to_csv_bytes(dataframe: pd.DataFrame) -> bytes:
@@ -823,7 +841,7 @@ def render_sidebar(repository_archive: pd.DataFrame) -> int:
 
 def main() -> None:
     try:
-        repository_archive = load_repository_archive(str(DATA_FILE))
+        repository_archive, archive_source, database_error = load_primary_archive(str(DATA_FILE))
     except (FileNotFoundError, ValueError, pd.errors.ParserError) as exc:
         st.error(str(exc))
         st.stop()
@@ -845,6 +863,12 @@ def main() -> None:
         "Archivio storico completo, finestra mobile e backtest walk-forward. "
         "È un selettore statistico: non rende prevedibile un'estrazione casuale."
     )
+    st.caption(f"Fonte dati attiva: **{archive_source}**")
+    if database_error and archive_source != "Supabase":
+        st.warning(
+            "Supabase non era disponibile: l'app sta usando il CSV di sicurezza. "
+            f"Dettaglio: {database_error}"
+        )
 
     metric_columns = st.columns(4)
     metric_columns[0].metric("Archivio totale", f"{len(archive):,}".replace(",", "."))
