@@ -12,6 +12,14 @@ import pandas as pd
 import streamlit as st
 
 from database import fetch_draws
+from services.archive_service import (
+    archive_to_csv_bytes,
+    load_primary_archive,
+    load_repository_archive,
+    normalize_archive_dataframe as validate_archive_dataframe,
+    read_csv_flexible,
+    validate_number,
+)
 
 
 APP_TITLE = "SuperEnalotto — Analisi statistica e sistemi"
@@ -48,131 +56,6 @@ st.set_page_config(page_title=APP_TITLE, page_icon="🎰", layout="wide")
 # -----------------------------------------------------------------------------
 # ARCHIVIO E VALIDAZIONE
 # -----------------------------------------------------------------------------
-def validate_number(value: Any, field_name: str, allow_empty: bool = False) -> int | None:
-    if allow_empty and (value is None or pd.isna(value) or str(value).strip() == ""):
-        return None
-
-    if isinstance(value, bool):
-        raise ValueError(f"{field_name} non valido.")
-
-    try:
-        number = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} deve essere un numero intero.") from exc
-
-    if not NUMBER_MIN <= number <= NUMBER_MAX:
-        raise ValueError(f"{field_name} deve essere compreso tra 1 e 90.")
-    return number
-
-
-def validate_archive_dataframe(raw_dataframe: pd.DataFrame) -> pd.DataFrame:
-    dataframe = raw_dataframe.copy()
-    dataframe.columns = [str(column).strip().lstrip("\ufeff").lower() for column in dataframe.columns]
-
-    missing_columns = [column for column in REQUIRED_COLUMNS if column not in dataframe.columns]
-    if missing_columns:
-        raise ValueError("Colonne mancanti: " + ", ".join(missing_columns))
-
-    dataframe = dataframe[REQUIRED_COLUMNS].copy()
-    dataframe["data"] = pd.to_datetime(dataframe["data"], errors="raise")
-    dataframe["anno"] = pd.to_numeric(dataframe["anno"], errors="raise").astype(int)
-    dataframe["concorso"] = pd.to_numeric(dataframe["concorso"], errors="raise").astype(int)
-
-    numeric_columns = [f"n{index}" for index in range(1, 7)] + ["superstar"]
-    for column in numeric_columns:
-        dataframe[column] = pd.to_numeric(dataframe[column], errors="raise").astype(int)
-
-    dataframe["jolly"] = pd.to_numeric(dataframe["jolly"], errors="coerce").astype("Int64")
-
-    if dataframe.empty:
-        raise ValueError("L'archivio è vuoto.")
-
-    duplicate_contests = dataframe.duplicated(subset=["anno", "concorso"], keep=False)
-    if duplicate_contests.any():
-        duplicated = dataframe.loc[duplicate_contests, ["anno", "concorso"]].head(5)
-        details = ", ".join(
-            f"{row.anno}/Conc.{row.concorso}" for row in duplicated.itertuples()
-        )
-        raise ValueError(f"Concorsi duplicati: {details}.")
-
-    duplicate_dates = dataframe.duplicated(subset=["data"], keep=False)
-    if duplicate_dates.any():
-        dates = dataframe.loc[duplicate_dates, "data"].dt.strftime("%d/%m/%Y").head(5)
-        raise ValueError("Date duplicate: " + ", ".join(dates))
-
-    for row_number, row in enumerate(dataframe.itertuples(index=False), start=2):
-        if row.data.year != row.anno:
-            raise ValueError(
-                f"Anno incoerente alla riga {row_number}: data {row.data:%d/%m/%Y}, "
-                f"anno indicato {row.anno}."
-            )
-
-        numbers = [getattr(row, f"n{index}") for index in range(1, 7)]
-        for index, number in enumerate(numbers, start=1):
-            validate_number(number, f"N{index} alla riga {row_number}")
-
-        if len(set(numbers)) != 6:
-            raise ValueError(f"Numeri duplicati nella sestina alla riga {row_number}.")
-
-        validate_number(row.superstar, f"SuperStar alla riga {row_number}")
-        validate_number(row.jolly, f"Jolly alla riga {row_number}", allow_empty=True)
-
-    for year, group in dataframe.groupby("anno"):
-        contests = sorted(group["concorso"].tolist())
-        expected = list(range(1, max(contests) + 1))
-        if contests != expected:
-            missing = sorted(set(expected) - set(contests))
-            preview = ", ".join(map(str, missing[:10]))
-            raise ValueError(
-                f"Nel {year} mancano concorsi nella sequenza: {preview}"
-                + ("..." if len(missing) > 10 else "")
-            )
-
-    return dataframe.sort_values(["data", "anno", "concorso"]).reset_index(drop=True)
-
-
-def read_csv_flexible(file_or_path: Any) -> pd.DataFrame:
-    try:
-        dataframe = pd.read_csv(file_or_path, sep=None, engine="python")
-    except UnicodeDecodeError:
-        if hasattr(file_or_path, "seek"):
-            file_or_path.seek(0)
-        dataframe = pd.read_csv(file_or_path, sep=None, engine="python", encoding="latin-1")
-    return validate_archive_dataframe(dataframe)
-
-
-@st.cache_data(show_spinner=False)
-def load_repository_archive(path_text: str) -> pd.DataFrame:
-    path = Path(path_text)
-    if not path.exists():
-        raise FileNotFoundError(
-            "File estrazioni.csv non trovato. Caricalo nella stessa cartella di app.py."
-        )
-    return read_csv_flexible(path)
-
-
-@st.cache_data(show_spinner=False, ttl=300)
-def load_primary_archive(path_text: str) -> tuple[pd.DataFrame, str, str | None]:
-    """Carica Supabase come fonte primaria, con fallback sicuro al CSV GitHub."""
-    database_error: str | None = None
-    try:
-        database_frame = fetch_draws()
-        if not database_frame.empty:
-            return validate_archive_dataframe(database_frame), "Supabase", None
-        database_error = "La tabella estrazioni di Supabase è vuota."
-    except Exception as exc:
-        database_error = str(exc)
-
-    repository_frame = load_repository_archive(path_text)
-    return repository_frame, "CSV del repository (fallback)", database_error
-
-
-def archive_to_csv_bytes(dataframe: pd.DataFrame) -> bytes:
-    output = dataframe.copy()
-    output["data"] = pd.to_datetime(output["data"]).dt.strftime("%Y-%m-%d")
-    return output.to_csv(index=False).encode("utf-8-sig")
-
-
 def dataframe_to_history(dataframe: pd.DataFrame) -> list[dict[str, Any]]:
     newest_first = dataframe.sort_values("data", ascending=False)
     history: list[dict[str, Any]] = []
@@ -841,7 +724,7 @@ def render_sidebar(repository_archive: pd.DataFrame) -> int:
 
 def main() -> None:
     try:
-        repository_archive, archive_source, database_error = load_primary_archive(str(DATA_FILE))
+        repository_archive, archive_source, database_error = load_primary_archive(str(DATA_FILE), fetch_draws)
     except (FileNotFoundError, ValueError, pd.errors.ParserError) as exc:
         st.error(str(exc))
         st.stop()

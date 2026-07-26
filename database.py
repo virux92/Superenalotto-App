@@ -64,6 +64,11 @@ def database_health() -> dict[str, object]:
 
 
 def fetch_draws() -> pd.DataFrame:
+    """Legge l'archivio senza passare da pandas.read_sql.
+
+    L'uso diretto del cursore psycopg evita incompatibilità tra versioni di
+    pandas/psycopg e garantisce che i nomi delle colonne siano separati dai dati.
+    """
     query = """
         select
             data_estrazione as data,
@@ -76,7 +81,14 @@ def fetch_draws() -> pd.DataFrame:
         order by data_estrazione, concorso
     """
     with get_connection() as connection:
-        return pd.read_sql_query(query, connection)
+        with connection.cursor() as cursor:
+            cursor.execute(query)
+            rows = cursor.fetchall()
+
+    columns = [
+        "data", "anno", "concorso", "n1", "n2", "n3", "n4", "n5", "n6", "jolly", "superstar"
+    ]
+    return pd.DataFrame(rows, columns=columns)
 
 
 def import_draws(dataframe: pd.DataFrame, source: str = "import_csv_iniziale") -> dict[str, int]:
