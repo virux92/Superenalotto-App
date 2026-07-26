@@ -31,6 +31,7 @@ from services.recommendation_service import (
     build_monitoring_tables,
     suggest_next_target,
 )
+from services.orion_service import build_orion_snapshot
 
 APP_TITLE = "SuperEnalotto — Analisi statistica e sistemi"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
@@ -106,89 +107,52 @@ def initialize_state() -> None:
         st.session_state.backtest_result = None
 
 
-def render_sidebar(archive: pd.DataFrame) -> int:
-    st.sidebar.header("Archivio estrazioni")
-    st.sidebar.metric("Estrazioni disponibili", f"{len(archive):,}".replace(",", "."))
+def render_sidebar(archive: pd.DataFrame) -> None:
+    st.sidebar.header("ORION")
+    st.sidebar.metric("Memoria storica", f"{len(archive):,}".replace(",", "."))
     st.sidebar.caption(
-        f"Dal {archive['data'].min():%d/%m/%Y} al {archive['data'].max():%d/%m/%Y}"
+        f"Archivio dal {archive['data'].min():%d/%m/%Y} al {archive['data'].max():%d/%m/%Y}"
     )
-
-    window_options = [50, 100, 200, 500, len(archive)]
-    window_options = sorted(
-        set(option for option in window_options if option <= len(archive))
-    )
-    return int(
-        st.sidebar.selectbox(
-            "Finestra statistica attiva",
-            window_options,
-            index=window_options.index(100) if 100 in window_options else 0,
-            format_func=lambda value: (
-                f"Tutto l'archivio ({value})"
-                if value == len(archive)
-                else f"Ultime {value}"
-            ),
-        )
+    st.sidebar.info(
+        "Le finestre statistiche, i pesi e i filtri sono gestiti automaticamente dal motore."
     )
 
 def render_single_tab(
-    scores: dict[int, float],
-    score_items: tuple[tuple[int, float], ...],
-    superstar_ranking: list[tuple[int, float, int, int]],
+    orion: dict[str, Any],
     archive: pd.DataFrame,
     database_available: bool,
 ) -> None:
-    st.subheader("Sestina elaborata sulla finestra attiva")
-    filter_columns = st.columns(5)
-    pool_size = filter_columns[0].slider("Pool top", 15, 25, 25)
-    minimum_sum = filter_columns[1].number_input("Somma minima", 100, 400, 200, 5)
-    maximum_sum = filter_columns[2].number_input("Somma massima", 120, 500, 340, 5)
-    maximum_low = filter_columns[3].number_input("Max numeri ≤31", 0, 6, 4, 1)
-    minimum_decades = filter_columns[4].number_input("Min decine", 2, 6, 4, 1)
+    st.subheader("ORION Generator")
+    st.caption("Il motore elabora automaticamente memorie, pesi e vincoli strutturali.")
 
     button_columns = st.columns(2)
     generate_main = button_columns[0].button(
-        "Calcola principale", type="primary", use_container_width=True
+        "Genera sestina ORION", type="primary", use_container_width=True
     )
     generate_alternative = button_columns[1].button(
-        "Alternativa tra le migliori", use_container_width=True
+        "Genera alternativa", use_container_width=True
     )
 
-    if minimum_sum >= maximum_sum:
-        st.error("La somma minima deve essere inferiore alla massima.")
-    elif generate_main or generate_alternative:
-        candidates = rank_candidate_sestine_cached(
-            score_items,
-            int(pool_size),
-            250,
-            int(minimum_sum),
-            int(maximum_sum),
-            int(maximum_low),
-            int(minimum_decades),
+    if generate_main or generate_alternative:
+        candidates = orion["candidates"]
+        previous = (
+            tuple(st.session_state.single_result["combo"])
+            if st.session_state.single_result
+            else None
         )
-        if not candidates:
-            st.error("Nessuna sestina rispetta i filtri.")
+        if generate_alternative:
+            alternatives = [item for item in candidates[:100] if item[1] != previous]
+            quality, combo = random.SystemRandom().choice(alternatives or candidates[:100])
         else:
-            previous = (
-                tuple(st.session_state.single_result["combo"])
-                if st.session_state.single_result
-                else None
-            )
-            if generate_alternative:
-                alternatives = [
-                    item for item in candidates[:100] if item[1] != previous
-                ]
-                quality, combo = random.SystemRandom().choice(
-                    alternatives or candidates[:100]
-                )
-            else:
-                quality, combo = candidates[0]
+            quality, combo = candidates[0]
 
-            st.session_state.single_result = {
-                "combo": combo,
-                "quality": quality,
-                "features": combination_features(combo),
-                "superstar": superstar_ranking[0][0],
-            }
+        st.session_state.single_result = {
+            "combo": combo,
+            "quality": quality,
+            "features": combination_features(combo),
+            "superstar": orion["superstar_ranking"][0][0],
+            "signature": orion["signature"],
+        }
 
     result = st.session_state.single_result
     if result:
@@ -763,19 +727,19 @@ def main() -> None:
 
     initialize_state()
     archive = repository_archive
-    window_size = render_sidebar(archive)
-    active_dataframe = archive.sort_values("data", ascending=False).head(window_size)
+    render_sidebar(archive)
+    active_dataframe = archive.copy()
     history = dataframe_to_history(active_dataframe)
+    orion = build_orion_snapshot(archive)
     metrics = calculate_metrics(history)
-    scores = metrics["score"]
-    superstar_ranking = calculate_superstar_ranking(history)
-    score_items = tuple(sorted(scores.items()))
+    scores = orion["score"]
+    superstar_ranking = orion["superstar_ranking"]
     snapshot = archive_snapshot(archive)
 
-    st.title("🎰 SuperEnalotto — Analizzatore statistico")
+    st.title("🌌 ORION Quant Engine")
     st.caption(
-        "Archivio persistente, analisi descrittiva e backtest walk-forward. "
-        "Il sistema misura il passato: non rende prevedibile un'estrazione casuale."
+        "Motore statistico multi-memoria per la generazione automatica di sestine e sistemi. "
+        "L'estrazione resta casuale: ORION organizza e verifica il processo, non garantisce vincite."
     )
     st.caption(f"Fonte dati attiva: **{archive_source}**")
     if database_error and archive_source != "Supabase":
@@ -785,12 +749,10 @@ def main() -> None:
         )
 
     metric_columns = st.columns(4)
-    metric_columns[0].metric("Archivio totale", f"{len(archive):,}".replace(",", "."))
-    metric_columns[1].metric("Finestra attiva", len(history))
-    metric_columns[2].metric(
-        "Anni presenti", f"{archive['anno'].min()}–{archive['anno'].max()}"
-    )
-    metric_columns[3].metric("Jolly mancanti", snapshot["missing_jolly"])
+    metric_columns[0].metric("Motore", f"ORION {orion['version']}")
+    metric_columns[1].metric("Stato", orion["status"])
+    metric_columns[2].metric("Memoria", f"{len(archive):,}".replace(",", "."))
+    metric_columns[3].metric("Firma modello", orion["signature"])
     st.caption(
         f"Snapshot archivio: `{snapshot['sha256'][:16]}` · "
         f"{snapshot['date_min']:%d/%m/%Y}–{snapshot['date_max']:%d/%m/%Y}"
@@ -808,9 +770,7 @@ def main() -> None:
         ]
     )
     with single_tab:
-        render_single_tab(
-            scores, score_items, superstar_ranking, archive, database_available
-        )
+        render_single_tab(orion, archive, database_available)
     with systems_tab:
         render_systems_tab(scores, superstar_ranking)
     with monitored_tab:

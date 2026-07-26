@@ -56,3 +56,13 @@
 - Segnalazione di ambo, terno, 4, 5, 5+1, 6, Jolly e SuperStar.
 - Esportazione CSV dello storico risultati.
 - Aggiunti test per due ambi consecutivi con la stessa schedina.
+
+## 2.6.0 — ORION Core
+
+- Introdotto il motore multi-memoria ORION 1.0.0.
+- Aggiunte memorie Breve, Operativa, Intermedia, Lunga e Storica.
+- Introdotti consenso multi-finestra e penalizzazione dell'instabilità.
+- Resa automatica la selezione dei vincoli strutturali.
+- Rimossi dalla generazione singola finestra, pesi e filtri manuali.
+- Aggiunti firma modello e stato del motore nella dashboard.
+- Aggiunti test dedicati; suite totale: 20 test.
