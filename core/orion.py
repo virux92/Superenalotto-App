@@ -18,7 +18,7 @@ class OrionMemory:
 
 @dataclass(frozen=True)
 class OrionPolicy:
-    version: str = "1.0.0"
+    version: str = "2.7.0"
     memories: tuple[OrionMemory, ...] = (
         OrionMemory("Breve", 25, 0.10),
         OrionMemory("Operativa", 50, 0.20),

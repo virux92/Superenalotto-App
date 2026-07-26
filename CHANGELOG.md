@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.7.0 — ORION User Experience
+
+- Ridisegnata la home con interfaccia moderna e orientata all’utente finale.
+- Mostrata automaticamente la proposta principale ORION.
+- Aggiunte sfere numeriche, pannello di coerenza e spiegazione della selezione.
+- Rese deterministiche e sequenziali le alternative tra i migliori candidati.
+- Introdotti profili di sistema semplici: Compatto, Equilibrato e Integrale 7 numeri.
+- Spostati archivio, statistiche e backtest nella sezione “Dati e verifica”.
+- Aggiunti `services/presentation_service.py` e `ui/orion_ui.py`.
+- Aggiornata la versione del motore a ORION 2.7.0.
+- Suite totale: 22 test.
+
 ## 2.5.1
 
 - Corretto il campo SuperStar nel modulo di registrazione manuale delle schedine.

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 from pathlib import Path
 from typing import Any
 
@@ -32,11 +31,19 @@ from services.recommendation_service import (
     suggest_next_target,
 )
 from services.orion_service import build_orion_snapshot
+from services.presentation_service import build_candidate_profile, build_orion_brief
+from ui.orion_ui import (
+    apply_orion_theme,
+    render_chips,
+    render_coherence,
+    render_hero,
+    render_number_balls,
+)
 
-APP_TITLE = "SuperEnalotto — Analisi statistica e sistemi"
+APP_TITLE = "ORION v2.7 — SuperEnalotto Quant Engine"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
 
-st.set_page_config(page_title=APP_TITLE, page_icon="🎰", layout="wide")
+st.set_page_config(page_title=APP_TITLE, page_icon="🌌", layout="wide")
 
 
 @st.cache_data(show_spinner=False)
@@ -103,213 +110,351 @@ def archive_analytics_cached(
 def initialize_state() -> None:
     if "single_result" not in st.session_state:
         st.session_state.single_result = None
+    if "orion_candidate_index" not in st.session_state:
+        st.session_state.orion_candidate_index = 0
+    if "system_result" not in st.session_state:
+        st.session_state.system_result = None
     if "backtest_result" not in st.session_state:
         st.session_state.backtest_result = None
 
 
-def render_sidebar(archive: pd.DataFrame) -> None:
-    st.sidebar.header("ORION")
-    st.sidebar.metric("Memoria storica", f"{len(archive):,}".replace(",", "."))
+def render_sidebar(
+    archive: pd.DataFrame,
+    orion: dict[str, Any],
+    archive_source: str,
+) -> None:
+    latest = archive.sort_values(["data", "concorso"]).iloc[-1]
+    brief = build_orion_brief(orion)
+
+    st.sidebar.markdown("## ✦ ORION")
+    st.sidebar.caption("Quant Engine · modalità automatica")
+    st.sidebar.metric("Archivio", f"{len(archive):,}".replace(",", "."))
+    st.sidebar.metric("Ultimo concorso", f"{int(latest['concorso'])}/{int(latest['anno'])}")
+    st.sidebar.metric("Coerenza", brief["coherence"])
     st.sidebar.caption(
-        f"Archivio dal {archive['data'].min():%d/%m/%Y} al {archive['data'].max():%d/%m/%Y}"
+        f"Dati: {archive_source} · aggiornati al {pd.Timestamp(latest['data']):%d/%m/%Y}"
     )
-    st.sidebar.info(
-        "Le finestre statistiche, i pesi e i filtri sono gestiti automaticamente dal motore."
+    st.sidebar.divider()
+    st.sidebar.markdown(
+        "ORION sceglie automaticamente finestre, pesi, vincoli e candidati. "
+        "Le sezioni tecniche restano disponibili, ma non servono per generare una proposta."
     )
+    st.sidebar.caption(
+        "Il SuperEnalotto resta un gioco casuale. Il motore ordina dati e criteri; "
+        "non crea probabilità aggiuntiva."
+    )
+
 
 def render_single_tab(
     orion: dict[str, Any],
     archive: pd.DataFrame,
     database_available: bool,
 ) -> None:
-    st.subheader("ORION Generator")
-    st.caption("Il motore elabora automaticamente memorie, pesi e vincoli strutturali.")
+    candidates = orion["candidates"]
+    brief = build_orion_brief(orion)
 
-    button_columns = st.columns(2)
-    generate_main = button_columns[0].button(
-        "Genera sestina ORION", type="primary", use_container_width=True
-    )
-    generate_alternative = button_columns[1].button(
-        "Genera alternativa", use_container_width=True
-    )
-
-    if generate_main or generate_alternative:
-        candidates = orion["candidates"]
-        previous = (
-            tuple(st.session_state.single_result["combo"])
-            if st.session_state.single_result
-            else None
-        )
-        if generate_alternative:
-            alternatives = [item for item in candidates[:100] if item[1] != previous]
-            quality, combo = random.SystemRandom().choice(alternatives or candidates[:100])
-        else:
-            quality, combo = candidates[0]
-
+    if st.session_state.single_result is None:
+        quality, combo = candidates[0]
+        st.session_state.orion_candidate_index = 0
         st.session_state.single_result = {
             "combo": combo,
             "quality": quality,
-            "features": combination_features(combo),
+            "profile": build_candidate_profile(combo, orion),
+            "superstar": orion["superstar_ranking"][0][0],
+            "signature": orion["signature"],
+        }
+
+    title_column, action_column = st.columns([1.55, 1])
+    with title_column:
+        st.subheader("Il consiglio di ORION")
+        st.caption(
+            "La proposta principale è deterministica: a parità di archivio e modello, "
+            "ORION restituisce la stessa sestina."
+        )
+    with action_column:
+        action_columns = st.columns(2)
+        reset_main = action_columns[0].button(
+            "Proposta principale", type="primary", use_container_width=True
+        )
+        next_alternative = action_columns[1].button(
+            "Altra proposta", use_container_width=True
+        )
+
+    if reset_main:
+        st.session_state.orion_candidate_index = 0
+    elif next_alternative:
+        candidate_count = min(30, len(candidates))
+        st.session_state.orion_candidate_index = (
+            int(st.session_state.orion_candidate_index) + 1
+        ) % candidate_count
+
+    selected_index = int(st.session_state.orion_candidate_index)
+    quality, combo = candidates[selected_index]
+    current_combo = tuple(st.session_state.single_result["combo"])
+    if combo != current_combo or reset_main or next_alternative:
+        st.session_state.single_result = {
+            "combo": combo,
+            "quality": quality,
+            "profile": build_candidate_profile(combo, orion),
             "superstar": orion["superstar_ranking"][0][0],
             "signature": orion["signature"],
         }
 
     result = st.session_state.single_result
-    if result:
-        number_columns = st.columns(6)
-        for index, number in enumerate(result["combo"], start=1):
-            number_columns[index - 1].metric(f"N{index}", number)
+    profile = result["profile"]
+    proposal_label = (
+        "Proposta principale"
+        if selected_index == 0
+        else f"Alternativa ORION #{selected_index}"
+    )
+    render_number_balls(
+        result["combo"],
+        int(result["superstar"]),
+        label=proposal_label,
+    )
 
-        detail_columns = st.columns(4)
-        detail_columns[0].metric("SuperStar statistico", result["superstar"])
-        detail_columns[1].metric("Somma", result["features"]["sum"])
-        even = result["features"]["even"]
-        detail_columns[2].metric("Pari / dispari", f"{even} / {6-even}")
-        detail_columns[3].metric("Decine", result["features"]["decades"])
+    detail_columns = st.columns(4)
+    detail_columns[0].metric("Somma", profile["features"]["sum"])
+    even = profile["features"]["even"]
+    detail_columns[1].metric("Pari / dispari", f"{even} / {6-even}")
+    detail_columns[2].metric("Decine coperte", profile["features"]["decades"])
+    detail_columns[3].metric("Numeri nella top 12", profile["top_twelve_count"])
+
+    explanation_column, coherence_column = st.columns([1.5, 1])
+    with explanation_column:
+        st.markdown("#### Perché è stata scelta")
+        structural_text = (
+            "rispetta tutti i vincoli strutturali ricavati dall’archivio"
+            if profile["structural_ok"]
+            else "usa il miglior compromesso disponibile tra punteggio e struttura"
+        )
+        st.markdown(
+            f"- **Consenso medio:** {profile['average_score']:.1%} sullo score normalizzato.\n"
+            f"- **Accordo tra memorie:** {profile['average_agreement']:.1%}.\n"
+            f"- **Struttura:** {structural_text}.\n"
+            f"- **Posizionamento:** numeri compresi tra il {profile['best_rank']}° e il "
+            f"{profile['worst_rank']}° posto del ranking corrente."
+        )
+    with coherence_column:
+        render_coherence(float(orion["stability"]), brief["coherence"])
+
+    with st.expander("Salva e monitora questa schedina", expanded=False):
+        if not database_available:
+            st.warning(
+                "Il salvataggio persistente richiede Supabase. In questo momento "
+                "l’app sta leggendo il CSV di emergenza."
+            )
+        else:
+            default_year, default_contest = suggest_next_target(archive)
+            with st.form("save_generated_recommendation"):
+                save_columns = st.columns([1.4, 1, 1, 1])
+                name = save_columns[0].text_input(
+                    "Nome",
+                    value=f"ORION {pd.Timestamp.now():%d/%m/%Y}",
+                )
+                start_year = save_columns[1].number_input(
+                    "Anno iniziale", min_value=2020, max_value=2100,
+                    value=int(default_year), step=1,
+                )
+                start_contest = save_columns[2].number_input(
+                    "Concorso iniziale", min_value=1,
+                    value=int(default_contest), step=1,
+                )
+                draw_count = save_columns[3].number_input(
+                    "Concorsi", min_value=1, max_value=100,
+                    value=5, step=1,
+                )
+                notes = st.text_input(
+                    "Note facoltative",
+                    placeholder="Esempio: stessa sestina per 5 concorsi",
+                )
+                save_submitted = st.form_submit_button(
+                    "Salva nel monitoraggio", type="primary", use_container_width=True
+                )
+            if save_submitted:
+                try:
+                    saved = save_recommendation(
+                        list(result["combo"]),
+                        int(result["superstar"]),
+                        int(start_year),
+                        int(start_contest),
+                        int(draw_count),
+                        name=name,
+                        source="orion_v2_7",
+                        notes=notes,
+                    )
+                except Exception as exc:
+                    st.error(str(exc))
+                else:
+                    st.success(
+                        f"Schedina #{saved['id']} salvata. Gli esiti verranno aggiornati "
+                        "quando saranno disponibili le nuove estrazioni."
+                    )
+
+    st.divider()
+    watch_column, latest_column = st.columns(2)
+    with watch_column:
+        st.markdown("#### Numeri sotto osservazione")
         st.caption(
-            "La sestina è una selezione statistica riproducibile; non modifica "
-            "la probabilità matematica della singola combinazione."
+            "Sono i numeri con il consenso ORION più alto adesso. Non sono numeri “più probabili”."
+        )
+        render_chips([str(number) for number in brief["top_numbers"]])
+        st.caption(
+            "Memorie attive: " + " · ".join(brief["memories"])
+        )
+    with latest_column:
+        latest = archive.sort_values(["data", "concorso"]).iloc[-1]
+        latest_numbers = [int(latest[f"n{index}"]) for index in range(1, 7)]
+        st.markdown("#### Ultima estrazione acquisita")
+        st.caption(
+            f"Concorso {int(latest['concorso'])}/{int(latest['anno'])} · "
+            f"{pd.Timestamp(latest['data']):%d/%m/%Y} · Jolly "
+            f"{('—' if pd.isna(latest['jolly']) else int(latest['jolly']))}"
+        )
+        render_number_balls(
+            latest_numbers,
+            int(latest["superstar"]),
+            compact=True,
+            label="Numeri estratti",
         )
 
-        with st.expander("Salva e monitora questa schedina", expanded=False):
-            if not database_available:
-                st.warning(
-                    "Il salvataggio richiede Supabase. In questo momento l'app sta usando "
-                    "il CSV di emergenza."
-                )
-            else:
-                default_year, default_contest = suggest_next_target(archive)
-                with st.form("save_generated_recommendation"):
-                    save_columns = st.columns(4)
-                    name = save_columns[0].text_input(
-                        "Nome",
-                        value=f"Sestina consigliata {pd.Timestamp.now():%d/%m/%Y}",
-                    )
-                    start_year = save_columns[1].number_input(
-                        "Anno iniziale", min_value=2020, max_value=2100,
-                        value=int(default_year), step=1,
-                    )
-                    start_contest = save_columns[2].number_input(
-                        "Concorso iniziale", min_value=1,
-                        value=int(default_contest), step=1,
-                    )
-                    draw_count = save_columns[3].number_input(
-                        "Concorsi da monitorare", min_value=1, max_value=100,
-                        value=5, step=1,
-                    )
-                    notes = st.text_input(
-                        "Note facoltative",
-                        placeholder="Esempio: giocata per 5 concorsi consecutivi",
-                    )
-                    save_submitted = st.form_submit_button(
-                        "Salva schedina nel database", type="primary",
-                        use_container_width=True,
-                    )
-                if save_submitted:
-                    try:
-                        saved = save_recommendation(
-                            list(result["combo"]),
-                            int(result["superstar"]),
-                            int(start_year),
-                            int(start_contest),
-                            int(draw_count),
-                            name=name,
-                            source="generatore_app",
-                            notes=notes,
-                        )
-                    except Exception as exc:
-                        st.error(str(exc))
-                    else:
-                        st.success(
-                            f"Schedina #{saved['id']} salvata. I risultati verranno "
-                            "calcolati automaticamente quando inserirai le estrazioni."
-                        )
+    st.caption(
+        "ORION applica criteri statistici allo storico, ma ogni sestina conserva la stessa "
+        "probabilità matematica di qualunque altra sestina valida."
+    )
 
 
 def render_systems_tab(
     scores: dict[int, float], superstar_ranking: list[tuple[int, float, int, int]]
 ) -> None:
-    st.subheader("Generatore sistemi")
-    with_superstar = st.checkbox("Costo con SuperStar", value=True)
-    system_type = st.selectbox(
-        "Tipologia", ["Integrale", "Basi e varianti", "Ridotto diversificato"]
+    st.subheader("Sistemi ORION")
+    st.caption(
+        "Scegli un profilo semplice. Il motore seleziona automaticamente i numeri; "
+        "tu decidi soltanto quanto allargare la giocata."
     )
 
-    if system_type == "Integrale":
-        integral_pool = st.radio("Numeri", [7, 8, 9], horizontal=True)
-        if st.button("Genera integrale", type="primary"):
-            pool, lines = generate_integral_system(scores, int(integral_pool))
-            st.write("**Pool:** " + ", ".join(map(str, pool)))
-            st.metric("Combinazioni", len(lines))
-            st.metric("Costo", euro(system_cost(len(lines), with_superstar)))
-            system_dataframe = pd.DataFrame(
-                lines, columns=[f"N{index}" for index in range(1, 7)]
-            )
-            if with_superstar:
-                system_dataframe["SuperStar"] = superstar_ranking[0][0]
-            st.dataframe(system_dataframe, use_container_width=True, hide_index=True)
-            st.download_button(
-                "Scarica sistema CSV",
-                system_dataframe.to_csv(index=False).encode("utf-8-sig"),
-                f"sistema_integrale_{integral_pool}.csv",
-                "text/csv",
-            )
-
-    elif system_type == "Basi e varianti":
-        setting_columns = st.columns(2)
-        base_count = setting_columns[0].slider("Basi fisse", 1, 3, 2)
-        required_variants = 6 - base_count
-        variant_count = setting_columns[1].slider(
-            "Varianti", required_variants, 10, max(6, required_variants)
+    profile_columns = st.columns([1.5, 1])
+    with profile_columns[0]:
+        system_profile = st.radio(
+            "Profilo",
+            [
+                "Compatto · 8 sestine",
+                "Equilibrato · 15 sestine",
+                "Integrale 7 numeri · 7 sestine",
+                "Personalizzato",
+            ],
+            horizontal=False,
         )
-        if st.button("Genera basi e varianti", type="primary"):
-            bases, variants, lines = generate_base_variant_system(
-                scores, int(base_count), int(variant_count)
-            )
-            st.write("**Basi:** " + ", ".join(map(str, bases)))
-            st.write("**Varianti:** " + ", ".join(map(str, variants)))
-            st.metric("Combinazioni", len(lines))
-            st.metric("Costo", euro(system_cost(len(lines), with_superstar)))
-            system_dataframe = pd.DataFrame(
-                lines, columns=[f"N{index}" for index in range(1, 7)]
-            )
-            if with_superstar:
-                system_dataframe["SuperStar"] = superstar_ranking[0][0]
-            st.dataframe(system_dataframe, use_container_width=True, hide_index=True)
-            st.download_button(
-                "Scarica sistema CSV",
-                system_dataframe.to_csv(index=False).encode("utf-8-sig"),
-                "sistema_basi_varianti.csv",
-                "text/csv",
-            )
+    with profile_columns[1]:
+        with_superstar = st.toggle("Aggiungi SuperStar", value=True)
+        st.info(
+            "Costo unitario applicato dal programma: 1,00 € per sestina, "
+            "+ 0,50 € con SuperStar."
+        )
 
-    else:
-        setting_columns = st.columns(2)
-        reduced_pool = setting_columns[0].slider("Pool", 10, 15, 12)
-        maximum_lines = setting_columns[1].slider("Sestine", 4, 20, 8)
-        if st.button("Genera ridotto", type="primary"):
-            pool, lines, coverage = generate_reduced_system(
-                scores, int(reduced_pool), int(maximum_lines)
+    settings: dict[str, int | str] = {"profile": system_profile}
+    if system_profile == "Personalizzato":
+        with st.expander("Impostazioni personalizzate", expanded=True):
+            custom_type = st.selectbox(
+                "Metodo", ["Ridotto diversificato", "Basi e varianti", "Integrale"]
             )
-            st.write("**Pool:** " + ", ".join(map(str, pool)))
-            result_columns = st.columns(3)
-            result_columns[0].metric("Combinazioni", len(lines))
-            result_columns[1].metric(
-                "Costo", euro(system_cost(len(lines), with_superstar))
-            )
-            result_columns[2].metric("Copertura coppie", f"{coverage:.1%}")
-            system_dataframe = pd.DataFrame(
-                lines, columns=[f"N{index}" for index in range(1, 7)]
-            )
-            if with_superstar:
-                system_dataframe["SuperStar"] = superstar_ranking[0][0]
-            st.dataframe(system_dataframe, use_container_width=True, hide_index=True)
-            st.download_button(
-                "Scarica sistema CSV",
-                system_dataframe.to_csv(index=False).encode("utf-8-sig"),
-                "sistema_ridotto.csv",
-                "text/csv",
-            )
+            settings["custom_type"] = custom_type
+            if custom_type == "Ridotto diversificato":
+                columns = st.columns(2)
+                settings["pool"] = int(columns[0].slider("Numeri nel pool", 10, 15, 12))
+                settings["lines"] = int(columns[1].slider("Sestine", 4, 20, 8))
+            elif custom_type == "Basi e varianti":
+                columns = st.columns(2)
+                base_count = int(columns[0].slider("Basi fisse", 1, 3, 2))
+                required_variants = 6 - base_count
+                settings["bases"] = base_count
+                settings["variants"] = int(
+                    columns[1].slider(
+                        "Varianti", required_variants, 10, max(6, required_variants)
+                    )
+                )
+            else:
+                settings["pool"] = int(st.radio("Numeri", [7, 8, 9], horizontal=True))
+
+    if st.button("Genera sistema ORION", type="primary", use_container_width=True):
+        coverage = None
+        bases: list[int] = []
+        variants: list[int] = []
+
+        if system_profile == "Compatto · 8 sestine":
+            pool, lines, coverage = generate_reduced_system(scores, 12, 8)
+            method = "Ridotto diversificato"
+        elif system_profile == "Equilibrato · 15 sestine":
+            bases, variants, lines = generate_base_variant_system(scores, 2, 6)
+            pool = sorted([*bases, *variants])
+            method = "Basi e varianti"
+        elif system_profile == "Integrale 7 numeri · 7 sestine":
+            pool, lines = generate_integral_system(scores, 7)
+            method = "Integrale"
+        else:
+            custom_type = str(settings["custom_type"])
+            method = custom_type
+            if custom_type == "Ridotto diversificato":
+                pool, lines, coverage = generate_reduced_system(
+                    scores, int(settings["pool"]), int(settings["lines"])
+                )
+            elif custom_type == "Basi e varianti":
+                bases, variants, lines = generate_base_variant_system(
+                    scores, int(settings["bases"]), int(settings["variants"])
+                )
+                pool = sorted([*bases, *variants])
+            else:
+                pool, lines = generate_integral_system(scores, int(settings["pool"]))
+
+        st.session_state.system_result = {
+            "method": method,
+            "pool": pool,
+            "bases": bases,
+            "variants": variants,
+            "lines": lines,
+            "coverage": coverage,
+            "with_superstar": with_superstar,
+            "superstar": superstar_ranking[0][0],
+        }
+
+    result = st.session_state.system_result
+    if result:
+        lines = result["lines"]
+        summary_columns = st.columns(4)
+        summary_columns[0].metric("Metodo", result["method"])
+        summary_columns[1].metric("Numeri usati", len(result["pool"]))
+        summary_columns[2].metric("Sestine", len(lines))
+        summary_columns[3].metric(
+            "Costo totale", euro(system_cost(len(lines), result["with_superstar"]))
+        )
+
+        if result["bases"]:
+            st.markdown("**Basi fisse:** " + " · ".join(map(str, result["bases"])))
+            st.markdown("**Varianti:** " + " · ".join(map(str, result["variants"])))
+        else:
+            st.markdown("**Pool ORION:**")
+            render_chips([str(number) for number in result["pool"]])
+
+        if result["coverage"] is not None:
+            st.caption(f"Copertura delle coppie nel pool: {result['coverage']:.1%}")
+
+        system_dataframe = pd.DataFrame(
+            lines, columns=[f"N{index}" for index in range(1, 7)]
+        )
+        if result["with_superstar"]:
+            system_dataframe["SuperStar"] = int(result["superstar"])
+        st.dataframe(system_dataframe, use_container_width=True, hide_index=True, height=480)
+        st.download_button(
+            "Scarica sistema CSV",
+            system_dataframe.to_csv(index=False).encode("utf-8-sig"),
+            "sistema_orion_v2_7.csv",
+            "text/csv",
+            use_container_width=True,
+        )
+        st.caption(
+            "Aumentare il numero di sestine aumenta soltanto la copertura acquistata e il costo. "
+            "Non rende il motore capace di prevedere un’estrazione casuale."
+        )
 
 
 def render_statistics_tab(
@@ -716,7 +861,30 @@ def render_archive_tab(archive: pd.DataFrame) -> None:
     st.dataframe(display_archive, use_container_width=True, hide_index=True, height=600)
 
 
+def render_data_and_verification_tab(
+    archive: pd.DataFrame,
+    metrics: dict[str, dict[int, float]],
+    scores: dict[int, float],
+    superstar_ranking: list[tuple[int, float, int, int]],
+) -> None:
+    st.subheader("Dati e verifica")
+    st.caption(
+        "Qui restano disponibili gli strumenti tecnici. Sono separati dalla schermata "
+        "principale perché servono a controllare il motore, non a pilotarlo a mano."
+    )
+    archive_tab, statistics_tab, backtest_tab = st.tabs(
+        ["Archivio", "Statistiche", "Backtest"]
+    )
+    with archive_tab:
+        render_archive_tab(archive)
+    with statistics_tab:
+        render_statistics_tab(archive.copy(), metrics, scores, superstar_ranking)
+    with backtest_tab:
+        render_backtest_tab(archive)
+
+
 def main() -> None:
+    apply_orion_theme()
     try:
         repository_archive, archive_source, database_error = load_primary_archive(
             str(DATA_FILE), fetch_draws
@@ -727,60 +895,50 @@ def main() -> None:
 
     initialize_state()
     archive = repository_archive
-    render_sidebar(archive)
-    active_dataframe = archive.copy()
-    history = dataframe_to_history(active_dataframe)
+    history = dataframe_to_history(archive)
     orion = build_orion_snapshot(archive)
     metrics = calculate_metrics(history)
     scores = orion["score"]
     superstar_ranking = orion["superstar_ranking"]
     snapshot = archive_snapshot(archive)
+    brief = build_orion_brief(orion)
 
-    st.title("🌌 ORION Quant Engine")
-    st.caption(
-        "Motore statistico multi-memoria per la generazione automatica di sestine e sistemi. "
-        "L'estrazione resta casuale: ORION organizza e verifica il processo, non garantisce vincite."
-    )
-    st.caption(f"Fonte dati attiva: **{archive_source}**")
-    if database_error and archive_source != "Supabase":
-        st.warning(
-            "Supabase non era disponibile: l'app sta usando il CSV di sicurezza. "
-            f"Dettaglio: {database_error}"
-        )
+    render_sidebar(archive, orion, archive_source)
+    render_hero(orion["version"], orion["status"], orion["signature"])
 
+    latest = archive.sort_values(["data", "concorso"]).iloc[-1]
     metric_columns = st.columns(4)
-    metric_columns[0].metric("Motore", f"ORION {orion['version']}")
-    metric_columns[1].metric("Stato", orion["status"])
-    metric_columns[2].metric("Memoria", f"{len(archive):,}".replace(",", "."))
-    metric_columns[3].metric("Firma modello", orion["signature"])
+    metric_columns[0].metric(
+        "Ultimo concorso", f"{int(latest['concorso'])}/{int(latest['anno'])}"
+    )
+    metric_columns[1].metric("Archivio", f"{len(archive):,}".replace(",", "."))
+    metric_columns[2].metric("Memorie attive", len(orion["memories"]))
+    metric_columns[3].metric("Coerenza modello", brief["coherence"])
+
     st.caption(
-        f"Snapshot archivio: `{snapshot['sha256'][:16]}` · "
+        f"Fonte dati: **{archive_source}** · snapshot `{snapshot['sha256'][:16]}` · "
         f"{snapshot['date_min']:%d/%m/%Y}–{snapshot['date_max']:%d/%m/%Y}"
     )
+    if database_error and archive_source != "Supabase":
+        st.warning(
+            "Supabase non è disponibile: ORION sta usando il CSV di sicurezza. "
+            f"Dettaglio tecnico: {database_error}"
+        )
 
     database_available = archive_source == "Supabase" and database_error is None
-    single_tab, systems_tab, monitored_tab, stats_tab, backtest_tab, archive_tab = st.tabs(
-        [
-            "Sestina singola",
-            "Sistemi",
-            "Schedine monitorate",
-            "Statistiche",
-            "Backtest",
-            "Archivio",
-        ]
+    orion_tab, systems_tab, monitored_tab, data_tab = st.tabs(
+        ["ORION", "Sistemi", "Le mie schedine", "Dati e verifica"]
     )
-    with single_tab:
+    with orion_tab:
         render_single_tab(orion, archive, database_available)
     with systems_tab:
         render_systems_tab(scores, superstar_ranking)
     with monitored_tab:
         render_monitored_tickets_tab(archive, database_available)
-    with stats_tab:
-        render_statistics_tab(active_dataframe, metrics, scores, superstar_ranking)
-    with backtest_tab:
-        render_backtest_tab(archive)
-    with archive_tab:
-        render_archive_tab(archive)
+    with data_tab:
+        render_data_and_verification_tab(
+            archive, metrics, scores, superstar_ranking
+        )
 
 
 if __name__ == "__main__":
