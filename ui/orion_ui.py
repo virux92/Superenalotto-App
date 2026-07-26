@@ -64,6 +64,45 @@ def apply_orion_theme() -> None:
             font-weight: 760;
         }
 
+        /* Sidebar: contrasto alto e testo leggibile anche su schermi grandi. */
+        [data-testid="stSidebar"] div[data-testid="stMetric"] {
+            background: linear-gradient(
+                135deg,
+                rgba(255, 255, 255, 0.16),
+                rgba(255, 255, 255, 0.08)
+            ) !important;
+            border: 1px solid rgba(255, 255, 255, 0.22) !important;
+            border-radius: 14px;
+            padding: .82rem .9rem;
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.16);
+        }
+        [data-testid="stSidebar"] div[data-testid="stMetric"] [data-testid="stMetricLabel"],
+        [data-testid="stSidebar"] div[data-testid="stMetric"] [data-testid="stMetricLabel"] p {
+            color: #cbd5e1 !important;
+            font-size: .78rem !important;
+            font-weight: 750 !important;
+            line-height: 1.25 !important;
+        }
+        [data-testid="stSidebar"] div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+            color: #ffffff !important;
+            font-size: 1.34rem !important;
+            font-weight: 850 !important;
+            line-height: 1.15 !important;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+        }
+        [data-testid="stSidebar"] p {
+            font-size: .90rem;
+            line-height: 1.55;
+        }
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+            color: #d8e0ec !important;
+            font-size: .79rem !important;
+            line-height: 1.45 !important;
+        }
+        [data-testid="stSidebar"] hr {
+            border-color: rgba(255, 255, 255, 0.15) !important;
+        }
+
         .stButton > button,
         .stDownloadButton > button {
             border-radius: 14px;

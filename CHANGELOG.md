@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.7.1 — Correzione leggibilità sidebar
+
+- Aumentato il contrasto dei tre riquadri riepilogativi nella barra laterale.
+- Sostituito il fondo quasi bianco con pannelli scuri semitrasparenti.
+- Ingranditi valori, etichette, didascalie e testo informativo della sidebar.
+- Rafforzati bordi e separatori per mantenere la leggibilità su monitor ad alta risoluzione.
+
 ## 2.7.0 — ORION User Experience
 
 - Ridisegnata la home con interfaccia moderna e orientata all’utente finale.
