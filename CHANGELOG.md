@@ -31,3 +31,12 @@
 - Aggiunti intervalli descrittivi, stabilità annuale ed esportazione CSV.
 - Aggiunta protezione opzionale del laboratorio tramite Streamlit Secrets.
 - Aggiunti test automatici per il motore degli esperimenti.
+
+## 2.4.0
+- Ripulita la barra laterale della home: rimossi inserimento temporaneo, import e download CSV.
+- Rimossa la copia modificabile dell'archivio da `st.session_state`.
+- Centralizzate tutte le scritture nella pagina Amministrazione Database.
+- Aggiunti inserimento permanente, correzione e cancellazione protetta dell'ultima estrazione.
+- Aggiunto svuotamento automatico della cache dopo ogni modifica a Supabase.
+- Chiarita la distinzione tra archivio vivo Supabase e CSV di emergenza GitHub.
+- Aggiunti test per inserimento e correzione delle estrazioni.

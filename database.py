@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Iterator
+import json
+from typing import Iterator, Mapping
 
 import pandas as pd
 import psycopg
@@ -151,9 +152,58 @@ def import_draws(dataframe: pd.DataFrame, source: str = "import_csv_iniziale") -
                 """,
                 (
                     f"Importate o aggiornate {len(records)} estrazioni",
-                    '{"origine":"estrazioni.csv"}',
+                    json.dumps({"origine": source}, ensure_ascii=False),
                 ),
             )
         connection.commit()
 
     return {"processed": len(records)}
+
+
+def upsert_draw(draw: Mapping[str, object], source: str = "inserimento_manuale") -> dict[str, int]:
+    """Inserisce o aggiorna una singola estrazione usando gli stessi controlli dell'import."""
+    return import_draws(pd.DataFrame([dict(draw)]), source=source)
+
+
+def delete_draw(year: int, contest: int, source: str = "eliminazione_manuale") -> dict[str, int]:
+    """Elimina un concorso esistente e registra l'operazione.
+
+    La UI espone questa funzione soltanto per l'ultima estrazione dell'archivio,
+    evitando buchi nella sequenza annuale.
+    """
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                delete from public.estrazioni
+                where anno = %s and concorso = %s
+                returning data_estrazione, anno, concorso
+                """,
+                (int(year), int(contest)),
+            )
+            deleted = cursor.fetchone()
+            if deleted is None:
+                raise ValueError(f"Concorso {contest} del {year} non trovato.")
+
+            cursor.execute(
+                """
+                insert into public.log_operazioni
+                    (livello, categoria, azione, messaggio, dettagli)
+                values ('warning', 'archivio', 'eliminazione_estrazione', %s, %s::jsonb)
+                """,
+                (
+                    f"Eliminato concorso {int(contest)} del {int(year)}",
+                    json.dumps(
+                        {
+                            "origine": source,
+                            "anno": int(year),
+                            "concorso": int(contest),
+                            "data": str(deleted["data_estrazione"]),
+                        },
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+        connection.commit()
+
+    return {"deleted": 1}

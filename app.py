@@ -20,13 +20,8 @@ from core.combinations import (
 )
 from core.metrics import calculate_metrics, calculate_superstar_ranking
 from database import fetch_draws
-from services.archive_service import (
-    archive_snapshot,
-    archive_to_csv_bytes,
-    load_primary_archive,
-    read_csv_flexible,
-)
-from services.draw_service import add_extraction, dataframe_to_history
+from services.archive_service import archive_snapshot, load_primary_archive
+from services.draw_service import dataframe_to_history
 
 APP_TITLE = "SuperEnalotto — Analisi statistica e sistemi"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
@@ -95,20 +90,16 @@ def archive_analytics_cached(
     return archive_analytics(dataframe_to_history(dataframe), association_limit)
 
 
-def initialize_state(repository_archive: pd.DataFrame) -> None:
-    if "archive" not in st.session_state:
-        st.session_state.archive = repository_archive.copy()
+def initialize_state() -> None:
     if "single_result" not in st.session_state:
         st.session_state.single_result = None
     if "backtest_result" not in st.session_state:
         st.session_state.backtest_result = None
 
 
-def render_sidebar(repository_archive: pd.DataFrame) -> int:
+def render_sidebar(archive: pd.DataFrame) -> int:
     st.sidebar.header("Archivio estrazioni")
-
-    archive = st.session_state.archive
-    st.sidebar.metric("Estrazioni caricate", f"{len(archive):,}".replace(",", "."))
+    st.sidebar.metric("Estrazioni disponibili", f"{len(archive):,}".replace(",", "."))
     st.sidebar.caption(
         f"Dal {archive['data'].min():%d/%m/%Y} al {archive['data'].max():%d/%m/%Y}"
     )
@@ -117,110 +108,18 @@ def render_sidebar(repository_archive: pd.DataFrame) -> int:
     window_options = sorted(
         set(option for option in window_options if option <= len(archive))
     )
-    window_size = st.sidebar.selectbox(
-        "Finestra statistica attiva",
-        window_options,
-        index=window_options.index(100) if 100 in window_options else 0,
-        format_func=lambda value: (
-            f"Tutto l'archivio ({value})"
-            if value == len(archive)
-            else f"Ultime {value}"
-        ),
-    )
-
-    with st.sidebar.expander("Aggiungi nuova estrazione"):
-        latest_date = archive["data"].max().date()
-        latest_year = latest_date.year
-        latest_contest = int(
-            archive.loc[archive["anno"] == latest_year, "concorso"].max()
+    return int(
+        st.sidebar.selectbox(
+            "Finestra statistica attiva",
+            window_options,
+            index=window_options.index(100) if 100 in window_options else 0,
+            format_func=lambda value: (
+                f"Tutto l'archivio ({value})"
+                if value == len(archive)
+                else f"Ultime {value}"
+            ),
         )
-
-        with st.form("add_extraction_form"):
-            draw_date = st.date_input("Data", value=latest_date)
-            default_contest = latest_contest + 1 if draw_date.year == latest_year else 1
-            contest = st.number_input(
-                "Numero concorso", min_value=1, value=int(default_contest), step=1
-            )
-
-            columns = st.columns(3)
-            numbers = [
-                columns[(index - 1) % 3].number_input(
-                    f"N{index}",
-                    min_value=1,
-                    max_value=90,
-                    value=index * 10,
-                    step=1,
-                    key=f"new_n{index}",
-                )
-                for index in range(1, 7)
-            ]
-
-            jolly_available = st.checkbox("Jolly disponibile", value=True)
-            jolly = st.number_input(
-                "Jolly",
-                min_value=1,
-                max_value=90,
-                value=15,
-                step=1,
-                disabled=not jolly_available,
-            )
-            superstar = st.number_input(
-                "SuperStar", min_value=1, max_value=90, value=30, step=1
-            )
-            submitted = st.form_submit_button(
-                "Aggiungi alla sessione", type="primary", use_container_width=True
-            )
-
-        if submitted:
-            try:
-                st.session_state.archive = add_extraction(
-                    archive,
-                    draw_date,
-                    int(contest),
-                    [int(number) for number in numbers],
-                    int(jolly) if jolly_available else None,
-                    int(superstar),
-                )
-                st.session_state.single_result = None
-                st.session_state.backtest_result = None
-                st.success("Estrazione aggiunta alla sessione.")
-                st.rerun()
-            except ValueError as exc:
-                st.error(str(exc))
-
-    st.sidebar.download_button(
-        "Scarica archivio CSV aggiornato",
-        data=archive_to_csv_bytes(st.session_state.archive),
-        file_name="estrazioni.csv",
-        mime="text/csv",
-        use_container_width=True,
     )
-
-    with st.sidebar.expander("Importa o ripristina archivio"):
-        uploaded = st.file_uploader("Carica estrazioni.csv", type=["csv"])
-        if uploaded is not None and st.button("Importa CSV", use_container_width=True):
-            try:
-                st.session_state.archive = read_csv_flexible(uploaded)
-                st.session_state.single_result = None
-                st.session_state.backtest_result = None
-                st.success("Archivio importato nella sessione.")
-                st.rerun()
-            except (ValueError, UnicodeDecodeError, pd.errors.ParserError) as exc:
-                st.error(str(exc))
-
-        if st.button("Ripristina fonte primaria", use_container_width=True):
-            st.session_state.archive = repository_archive.copy()
-            st.session_state.single_result = None
-            st.session_state.backtest_result = None
-            st.success("Archivio ripristinato.")
-            st.rerun()
-
-    st.sidebar.info(
-        "Gli inserimenti effettuati qui modificano soltanto la sessione. "
-        "La scrittura permanente su Supabase resta nella pagina Amministrazione Database."
-    )
-    return int(window_size)
-
 
 def render_single_tab(
     scores: dict[int, float],
@@ -610,10 +509,9 @@ def main() -> None:
         st.error(str(exc))
         st.stop()
 
-    initialize_state(repository_archive)
-    window_size = render_sidebar(repository_archive)
-
-    archive = st.session_state.archive
+    initialize_state()
+    archive = repository_archive
+    window_size = render_sidebar(archive)
     active_dataframe = archive.sort_values("data", ascending=False).head(window_size)
     history = dataframe_to_history(active_dataframe)
     metrics = calculate_metrics(history)

@@ -84,3 +84,50 @@ def add_extraction(
 
     updated = pd.concat([dataframe, pd.DataFrame([new_row])], ignore_index=True)
     return normalize_archive_dataframe(updated)
+
+
+def update_extraction(
+    dataframe: pd.DataFrame,
+    year: int,
+    contest: int,
+    draw_date: date,
+    numbers: list[int],
+    jolly: int | None,
+    superstar: int,
+) -> pd.DataFrame:
+    """Corregge un concorso esistente senza cambiarne anno e numero."""
+    year = int(year)
+    contest = int(contest)
+    mask = (dataframe["anno"] == year) & (dataframe["concorso"] == contest)
+    if int(mask.sum()) != 1:
+        raise ValueError(f"Concorso {contest} del {year} non trovato in modo univoco.")
+    if draw_date.year != year:
+        raise ValueError(
+            f"La data deve appartenere al {year}, anno del concorso selezionato."
+        )
+
+    timestamp = pd.Timestamp(draw_date)
+    duplicate_date = dataframe.loc[~mask, "data"].eq(timestamp).any()
+    if duplicate_date:
+        raise ValueError(f"Esiste già un'altra estrazione in data {draw_date:%d/%m/%Y}.")
+
+    validated_numbers = [
+        int(validate_number(number, f"N{index}"))
+        for index, number in enumerate(numbers, start=1)
+    ]
+    if len(set(validated_numbers)) != 6:
+        raise ValueError("I sei numeri devono essere tutti differenti.")
+
+    validated_jolly = validate_number(jolly, "Jolly", allow_empty=True)
+    validated_superstar = int(validate_number(superstar, "SuperStar"))
+
+    updated = dataframe.copy()
+    row_index = updated.index[mask][0]
+    sorted_numbers = sorted(validated_numbers)
+    updated.loc[row_index, "data"] = timestamp
+    for index, number in enumerate(sorted_numbers, start=1):
+        updated.loc[row_index, f"n{index}"] = number
+    updated.loc[row_index, "jolly"] = validated_jolly
+    updated.loc[row_index, "superstar"] = validated_superstar
+
+    return normalize_archive_dataframe(updated)
