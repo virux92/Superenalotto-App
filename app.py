@@ -568,6 +568,16 @@ def render_monitored_tickets_tab(
 
     default_year, default_contest = suggest_next_target(archive)
     with st.expander("Registra una schedina già giocata", expanded=False):
+        # Questo controllo resta fuori dal form: i widget contenuti in un form
+        # aggiornano lo stato soltanto al submit. In questo modo la selezione
+        # abilita immediatamente il campo numerico del SuperStar.
+        has_superstar = st.checkbox(
+            "SuperStar giocato",
+            value=False,
+            key="manual_has_superstar",
+            help="Attiva il campo per indicare il numero SuperStar effettivamente giocato.",
+        )
+
         with st.form("manual_recommendation"):
             identity_columns = st.columns(4)
             name = identity_columns[0].text_input(
@@ -594,13 +604,18 @@ def render_monitored_tickets_tab(
                 )
                 for index in range(1, 7)
             ]
-            extra_columns = st.columns(2)
-            has_superstar = extra_columns[0].checkbox(
-                "SuperStar giocato", value=False, key="manual_has_superstar"
-            )
-            superstar = extra_columns[1].number_input(
-                "SuperStar", min_value=1, max_value=90, value=1, step=1,
-                disabled=not has_superstar, key="manual_ticket_superstar",
+            superstar = st.number_input(
+                "Numero SuperStar",
+                min_value=1,
+                max_value=90,
+                value=1,
+                step=1,
+                disabled=not has_superstar,
+                key="manual_ticket_superstar",
+                help=(
+                    "Numero SuperStar associato alla schedina. "
+                    "Il campo si abilita selezionando ‘SuperStar giocato’ sopra il modulo."
+                ),
             )
             notes = st.text_input(
                 "Note facoltative", key="manual_ticket_notes",

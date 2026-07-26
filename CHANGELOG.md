@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.5.1
+
+- Corretto il campo SuperStar nel modulo di registrazione manuale delle schedine.
+- Il checkbox ora abilita immediatamente il numero SuperStar, senza attendere l'invio del form.
+
 ## v2.0.0 — Database First stabile
 
 - Supabase resta la fonte primaria dell'archivio.

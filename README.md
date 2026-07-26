@@ -1,6 +1,6 @@
 # SuperEnalotto — Analisi statistica e sistemi
 
-Versione **2.5.0**.
+Versione **2.5.1**.
 
 ## Architettura
 
