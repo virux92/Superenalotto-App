@@ -40,3 +40,14 @@
 - Aggiunto svuotamento automatico della cache dopo ogni modifica a Supabase.
 - Chiarita la distinzione tra archivio vivo Supabase e CSV di emergenza GitHub.
 - Aggiunti test per inserimento e correzione delle estrazioni.
+
+## v2.5.0 — Schedine monitorate
+
+- Aggiunta tabella Supabase `schedine_monitorate`, creata automaticamente.
+- Salvataggio persistente delle sestine generate.
+- Registrazione manuale delle schedine già giocate.
+- Monitoraggio della stessa schedina per più concorsi consecutivi.
+- Calcolo automatico dell'esito per ciascuna estrazione.
+- Segnalazione di ambo, terno, 4, 5, 5+1, 6, Jolly e SuperStar.
+- Esportazione CSV dello storico risultati.
+- Aggiunti test per due ambi consecutivi con la stessa schedina.

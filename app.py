@@ -19,9 +19,18 @@ from core.combinations import (
     system_cost,
 )
 from core.metrics import calculate_metrics, calculate_superstar_ranking
-from database import fetch_draws
+from database import (
+    delete_recommendation,
+    fetch_draws,
+    fetch_recommendations,
+    save_recommendation,
+)
 from services.archive_service import archive_snapshot, load_primary_archive
 from services.draw_service import dataframe_to_history
+from services.recommendation_service import (
+    build_monitoring_tables,
+    suggest_next_target,
+)
 
 APP_TITLE = "SuperEnalotto — Analisi statistica e sistemi"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
@@ -125,6 +134,8 @@ def render_single_tab(
     scores: dict[int, float],
     score_items: tuple[tuple[int, float], ...],
     superstar_ranking: list[tuple[int, float, int, int]],
+    archive: pd.DataFrame,
+    database_available: bool,
 ) -> None:
     st.subheader("Sestina elaborata sulla finestra attiva")
     filter_columns = st.columns(5)
@@ -195,6 +206,60 @@ def render_single_tab(
             "La sestina è una selezione statistica riproducibile; non modifica "
             "la probabilità matematica della singola combinazione."
         )
+
+        with st.expander("Salva e monitora questa schedina", expanded=False):
+            if not database_available:
+                st.warning(
+                    "Il salvataggio richiede Supabase. In questo momento l'app sta usando "
+                    "il CSV di emergenza."
+                )
+            else:
+                default_year, default_contest = suggest_next_target(archive)
+                with st.form("save_generated_recommendation"):
+                    save_columns = st.columns(4)
+                    name = save_columns[0].text_input(
+                        "Nome",
+                        value=f"Sestina consigliata {pd.Timestamp.now():%d/%m/%Y}",
+                    )
+                    start_year = save_columns[1].number_input(
+                        "Anno iniziale", min_value=2020, max_value=2100,
+                        value=int(default_year), step=1,
+                    )
+                    start_contest = save_columns[2].number_input(
+                        "Concorso iniziale", min_value=1,
+                        value=int(default_contest), step=1,
+                    )
+                    draw_count = save_columns[3].number_input(
+                        "Concorsi da monitorare", min_value=1, max_value=100,
+                        value=5, step=1,
+                    )
+                    notes = st.text_input(
+                        "Note facoltative",
+                        placeholder="Esempio: giocata per 5 concorsi consecutivi",
+                    )
+                    save_submitted = st.form_submit_button(
+                        "Salva schedina nel database", type="primary",
+                        use_container_width=True,
+                    )
+                if save_submitted:
+                    try:
+                        saved = save_recommendation(
+                            list(result["combo"]),
+                            int(result["superstar"]),
+                            int(start_year),
+                            int(start_contest),
+                            int(draw_count),
+                            name=name,
+                            source="generatore_app",
+                            notes=notes,
+                        )
+                    except Exception as exc:
+                        st.error(str(exc))
+                    else:
+                        st.success(
+                            f"Schedina #{saved['id']} salvata. I risultati verranno "
+                            "calcolati automaticamente quando inserirai le estrazioni."
+                        )
 
 
 def render_systems_tab(
@@ -485,6 +550,178 @@ def render_backtest_tab(archive: pd.DataFrame) -> None:
         )
 
 
+def render_monitored_tickets_tab(
+    archive: pd.DataFrame, database_available: bool
+) -> None:
+    st.subheader("Schedine consigliate e risultati")
+    st.caption(
+        "Ogni schedina viene confrontata automaticamente con i concorsi indicati. "
+        "Quando aggiungi una nuova estrazione a Supabase, il relativo esito compare qui."
+    )
+
+    if not database_available:
+        st.warning(
+            "Il monitoraggio persistente richiede Supabase. L'archivio è attualmente "
+            "caricato dal CSV di emergenza."
+        )
+        return
+
+    default_year, default_contest = suggest_next_target(archive)
+    with st.expander("Registra una schedina già giocata", expanded=False):
+        with st.form("manual_recommendation"):
+            identity_columns = st.columns(4)
+            name = identity_columns[0].text_input(
+                "Nome", value="Schedina giocata", key="manual_ticket_name"
+            )
+            start_year = identity_columns[1].number_input(
+                "Anno iniziale", min_value=2020, max_value=2100,
+                value=int(default_year), step=1, key="manual_start_year",
+            )
+            start_contest = identity_columns[2].number_input(
+                "Concorso iniziale", min_value=1, value=int(default_contest),
+                step=1, key="manual_start_contest",
+            )
+            draw_count = identity_columns[3].number_input(
+                "Concorsi giocati", min_value=1, max_value=100, value=5,
+                step=1, key="manual_draw_count",
+            )
+
+            number_columns = st.columns(6)
+            numbers = [
+                number_columns[index - 1].number_input(
+                    f"N{index}", min_value=1, max_value=90, value=index,
+                    step=1, key=f"manual_ticket_n{index}",
+                )
+                for index in range(1, 7)
+            ]
+            extra_columns = st.columns(2)
+            has_superstar = extra_columns[0].checkbox(
+                "SuperStar giocato", value=False, key="manual_has_superstar"
+            )
+            superstar = extra_columns[1].number_input(
+                "SuperStar", min_value=1, max_value=90, value=1, step=1,
+                disabled=not has_superstar, key="manual_ticket_superstar",
+            )
+            notes = st.text_input(
+                "Note facoltative", key="manual_ticket_notes",
+                placeholder="Esempio: stessa schedina per cinque concorsi",
+            )
+            submitted = st.form_submit_button(
+                "Registra e monitora", type="primary", use_container_width=True
+            )
+        if submitted:
+            try:
+                saved = save_recommendation(
+                    [int(number) for number in numbers],
+                    int(superstar) if has_superstar else None,
+                    int(start_year),
+                    int(start_contest),
+                    int(draw_count),
+                    name=name,
+                    source="inserimento_manuale",
+                    notes=notes,
+                )
+            except Exception as exc:
+                st.error(str(exc))
+            else:
+                st.session_state["ticket_flash"] = (
+                    f"Schedina #{saved['id']} registrata correttamente."
+                )
+                st.rerun()
+
+    flash = st.session_state.pop("ticket_flash", None)
+    if flash:
+        st.success(flash)
+
+    try:
+        recommendations = fetch_recommendations()
+    except Exception as exc:
+        st.error(f"Impossibile leggere le schedine monitorate: {exc}")
+        return
+
+    if recommendations.empty:
+        st.info(
+            "Non ci sono ancora schedine monitorate. Puoi salvare una sestina generata "
+            "oppure registrare qui una schedina già giocata."
+        )
+        return
+
+    summary, details = build_monitoring_tables(recommendations, archive)
+    total_results = int(summary["Risultati 2+"].sum()) if not summary.empty else 0
+    evaluated_draws = int(summary["Concorsi valutati"].sum()) if not summary.empty else 0
+    pending_draws = int(summary["Concorsi in attesa"].sum()) if not summary.empty else 0
+    metric_columns = st.columns(4)
+    metric_columns[0].metric("Schedine monitorate", len(summary))
+    metric_columns[1].metric("Concorsi valutati", evaluated_draws)
+    metric_columns[2].metric("Risultati da 2 in su", total_results)
+    metric_columns[3].metric("Concorsi in attesa", pending_draws)
+
+    st.subheader("Riepilogo schedine")
+    st.dataframe(summary, use_container_width=True, hide_index=True)
+
+    st.subheader("Esito di ogni estrazione")
+    if details.empty:
+        st.info("I concorsi iniziali registrati non sono ancora presenti nell'archivio.")
+    else:
+        display_details = details.copy()
+        display_details["Segnalazione"] = display_details.apply(
+            lambda row: (
+                f"✅ {row['Risultato']}"
+                if int(row["Punti"]) >= 2
+                else f"— {row['Risultato']}"
+            ),
+            axis=1,
+        )
+        display_details["Data"] = pd.to_datetime(display_details["Data"]).dt.strftime(
+            "%d/%m/%Y"
+        )
+        preferred_columns = [
+            "Segnalazione", "Nome", "Data", "Concorso", "Sestina giocata",
+            "Numeri estratti", "Punti", "Numeri centrati", "Jolly centrato",
+            "SuperStar centrato",
+        ]
+        st.dataframe(
+            display_details[preferred_columns],
+            use_container_width=True,
+            hide_index=True,
+            height=520,
+        )
+        st.download_button(
+            "Scarica storico risultati CSV",
+            details.to_csv(index=False).encode("utf-8-sig"),
+            "storico_schedine_monitorate.csv",
+            "text/csv",
+        )
+
+    with st.expander("Elimina una schedina dal monitoraggio"):
+        ticket_options = {
+            f"#{int(row.id)} — {row.nome} — {int(row.concorso_inizio)}/{int(row.anno_inizio)}": int(row.id)
+            for row in recommendations.itertuples(index=False)
+        }
+        selected_label = st.selectbox(
+            "Schedina", list(ticket_options), key="delete_ticket_selection"
+        )
+        selected_id = ticket_options[selected_label]
+        confirmation = st.text_input(
+            f"Per confermare scrivi ELIMINA {selected_id}",
+            key="delete_ticket_confirmation",
+        )
+        if st.button(
+            "Elimina schedina",
+            disabled=confirmation.strip() != f"ELIMINA {selected_id}",
+            key="delete_monitored_ticket",
+        ):
+            try:
+                delete_recommendation(selected_id)
+            except Exception as exc:
+                st.error(str(exc))
+            else:
+                st.session_state["ticket_flash"] = (
+                    f"Schedina #{selected_id} eliminata dal monitoraggio."
+                )
+                st.rerun()
+
+
 def render_archive_tab(archive: pd.DataFrame) -> None:
     st.subheader("Archivio completo")
     year_options = ["Tutti"] + sorted(archive["anno"].unique().tolist(), reverse=True)
@@ -544,13 +781,25 @@ def main() -> None:
         f"{snapshot['date_min']:%d/%m/%Y}–{snapshot['date_max']:%d/%m/%Y}"
     )
 
-    single_tab, systems_tab, stats_tab, backtest_tab, archive_tab = st.tabs(
-        ["Sestina singola", "Sistemi", "Statistiche", "Backtest", "Archivio"]
+    database_available = archive_source == "Supabase" and database_error is None
+    single_tab, systems_tab, monitored_tab, stats_tab, backtest_tab, archive_tab = st.tabs(
+        [
+            "Sestina singola",
+            "Sistemi",
+            "Schedine monitorate",
+            "Statistiche",
+            "Backtest",
+            "Archivio",
+        ]
     )
     with single_tab:
-        render_single_tab(scores, score_items, superstar_ranking)
+        render_single_tab(
+            scores, score_items, superstar_ranking, archive, database_available
+        )
     with systems_tab:
         render_systems_tab(scores, superstar_ranking)
+    with monitored_tab:
+        render_monitored_tickets_tab(archive, database_available)
     with stats_tab:
         render_statistics_tab(active_dataframe, metrics, scores, superstar_ranking)
     with backtest_tab:
