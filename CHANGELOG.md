@@ -23,3 +23,11 @@
 - Aggiunto benchmark casuale deterministico e riproducibile al backtest.
 - Aggiunte deviazione standard, intervallo di confidenza e stabilità annuale.
 - Aggiunta suite di test automatici per archivio, metriche, analytics e assenza di future leakage.
+
+## 2.3.0
+- Aggiunto il Laboratorio sperimentale in una pagina dedicata.
+- Introdotti sei profili di scoring confrontabili con backtest walk-forward.
+- Aggiunto confronto appaiato con baseline casuale deterministica.
+- Aggiunti intervalli descrittivi, stabilità annuale ed esportazione CSV.
+- Aggiunta protezione opzionale del laboratorio tramite Streamlit Secrets.
+- Aggiunti test automatici per il motore degli esperimenti.

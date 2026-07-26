@@ -1,22 +1,17 @@
-# SuperEnalotto Quantitative Research Engine
+# SuperEnalotto — Analisi statistica e sistemi
 
-Applicazione personale Streamlit con archivio primario Supabase, analisi descrittiva, generazione di sestine e sistemi, e backtest walk-forward.
+Versione **2.3.0**.
 
-## Principio scientifico
+## Architettura
 
-Il software non promette di prevedere un'estrazione casuale. Frequenze, ritardi e associazioni descrivono lo storico; ogni configurazione deve essere confrontata con benchmark e dati fuori campione.
+- `app.py`: interfaccia principale;
+- `core/`: metriche, analisi, combinazioni, backtest ed esperimenti;
+- `services/`: caricamento e validazione archivio;
+- `pages/10_Laboratorio.py`: confronto sperimentale delle strategie;
+- `pages/99_Amministrazione_Database.py`: gestione Supabase e backup;
+- `tests/`: controlli automatici del motore.
 
-## Struttura
+La fonte principale è Supabase, con fallback sul CSV del repository.
 
-- `app.py`: interfaccia Streamlit.
-- `core/`: metriche, analisi, combinazioni e backtest.
-- `services/`: accesso archivio e operazioni sulle estrazioni.
-- `database.py`: accesso PostgreSQL/Supabase.
-- `pages/99_Amministrazione_Database.py`: diagnostica, importazione e backup.
-- `tests/`: test automatici senza dipendenze aggiuntive.
-
-## Test
-
-```bash
-python -m unittest discover -s tests -v
-```
+Il software analizza dati storici e confronta euristiche. Non può prevedere
+estrazioni casuali né modificare le probabilità matematiche del gioco.
