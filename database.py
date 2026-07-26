@@ -362,3 +362,90 @@ def delete_recommendation(recommendation_id: int) -> dict[str, int]:
             )
         connection.commit()
     return {"deleted": 1}
+
+
+@st.cache_resource(show_spinner=False)
+def ensure_forge_experiments_table() -> None:
+    """Crea il registro persistente degli esperimenti automatici di FORGE."""
+    statements = [
+        """
+        create table if not exists public.forge_experiments (
+            experiment_key text primary key,
+            archive_signature text not null,
+            model_id text not null,
+            status text not null check (status in ('valid', 'rejected', 'failed')),
+            quality double precision null,
+            configuration jsonb not null default '{}'::jsonb,
+            metrics jsonb not null default '{}'::jsonb,
+            checks jsonb not null default '{}'::jsonb,
+            reason text null,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        )
+        """,
+        """
+        create index if not exists forge_experiments_archive_idx
+            on public.forge_experiments (archive_signature, status, quality desc)
+        """,
+    ]
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            for statement in statements:
+                cursor.execute(statement)
+        connection.commit()
+
+
+def fetch_forge_experiments(archive_signature: str) -> list[dict[str, object]]:
+    ensure_forge_experiments_table()
+    query = """
+        select experiment_key, archive_signature, model_id, status, quality,
+               configuration, metrics, checks, reason, created_at, updated_at
+        from public.forge_experiments
+        where archive_signature = %s
+        order by quality desc nulls last, model_id
+    """
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(query, (str(archive_signature),))
+            rows = cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+def save_forge_experiment(record: Mapping[str, object]) -> dict[str, str]:
+    ensure_forge_experiments_table()
+    query = """
+        insert into public.forge_experiments (
+            experiment_key, archive_signature, model_id, status, quality,
+            configuration, metrics, checks, reason
+        ) values (
+            %(experiment_key)s, %(archive_signature)s, %(model_id)s, %(status)s,
+            %(quality)s, %(configuration)s::jsonb, %(metrics)s::jsonb,
+            %(checks)s::jsonb, %(reason)s
+        )
+        on conflict (experiment_key) do update set
+            status = excluded.status,
+            quality = excluded.quality,
+            configuration = excluded.configuration,
+            metrics = excluded.metrics,
+            checks = excluded.checks,
+            reason = excluded.reason,
+            updated_at = now()
+        returning experiment_key
+    """
+    payload = {
+        "experiment_key": str(record["experiment_key"]),
+        "archive_signature": str(record["archive_signature"]),
+        "model_id": str(record["model_id"]),
+        "status": str(record["status"]),
+        "quality": record.get("quality"),
+        "configuration": json.dumps(record.get("configuration", {}), ensure_ascii=False),
+        "metrics": json.dumps(record.get("metrics", {}), ensure_ascii=False, default=str),
+        "checks": json.dumps(record.get("checks", {}), ensure_ascii=False),
+        "reason": record.get("reason"),
+    }
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(query, payload)
+            saved = cursor.fetchone()
+        connection.commit()
+    return {"experiment_key": str(saved["experiment_key"])}

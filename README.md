@@ -1,23 +1,31 @@
 # ORION — SuperEnalotto Quant Engine
 
-Versione **2.7.0**.
+Versione **2.7.2**.
 
-ORION è un motore statistico multi-memoria con interfaccia Streamlit. Analizza lo storico, fonde segnali provenienti da cinque finestre e costruisce automaticamente sestine e sistemi coerenti con la struttura dell’archivio.
+ORION è un motore statistico multi-memoria con interfaccia Streamlit. FORGE lavora dietro le quinte: genera modelli candidati, li sottopone a backtest walk-forward, registra gli esperimenti già conclusi e promuove a ORION soltanto i candidati che superano i controlli operativi.
 
-## Uso ordinario
+## Menu utente
 
-La home è progettata per l’utente finale: mostra subito la proposta ORION, una spiegazione sintetica, il SuperStar statistico e i comandi per salvare o generare un’alternativa. Finestre, pesi e filtri non vengono scaricati sull’utente.
+L’interfaccia espone soltanto cinque sezioni:
+
+- **Home**
+- **Genera**
+- **Schedine**
+- **Archivio**
+- **Impostazioni**
+
+Pesi, finestre statistiche, filtri tecnici e comandi del vecchio Laboratorio non sono più esposti.
 
 ## Architettura
 
-- `app.py`: dashboard principale ORION;
-- `core/`: metriche, consenso multi-memoria, combinazioni, analisi e backtest;
-- `services/`: archivio, estrazioni, monitoraggio schedine e presentazione dei risultati;
-- `ui/`: tema e componenti grafici Streamlit;
-- `pages/10_Laboratorio.py`: confronto sperimentale delle strategie;
-- `pages/99_Amministrazione_Database.py`: gestione permanente di Supabase e backup;
+- `app.py`: interfaccia principale e navigazione essenziale;
+- `core/orion.py`: consenso multi-memoria e costruzione dello stato ORION;
+- `core/forge.py`: definizione, identificazione, validazione e promozione dei modelli candidati;
+- `services/forge_service.py`: esecuzione automatica dei backtest e registro degli esperimenti;
+- `database.py`: archivio Supabase, schedine monitorate e registro persistente FORGE;
+- `ui/`: tema e componenti grafici già introdotti nella v2.7;
 - `tests/`: controlli automatici del motore.
 
-La fonte principale è Supabase, con fallback sul CSV del repository. Le estrazioni permanenti si inseriscono dalla pagina di amministrazione. Le schedine monitorate vengono confrontate automaticamente con i concorsi successivi.
+La fonte principale è Supabase, con fallback sul CSV del repository. FORGE usa Supabase per ricordare gli esperimenti quando disponibile e un registro locale di emergenza negli altri casi.
 
 Il software organizza dati storici ed euristiche. Non può prevedere estrazioni casuali e non modifica la probabilità matematica della singola sestina.

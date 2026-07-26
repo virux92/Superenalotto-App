@@ -30,6 +30,7 @@ from services.recommendation_service import (
     build_monitoring_tables,
     suggest_next_target,
 )
+from services.forge_service import build_forge_snapshot
 from services.orion_service import build_orion_snapshot
 from services.presentation_service import build_candidate_profile, build_orion_brief
 from ui.orion_ui import (
@@ -40,7 +41,7 @@ from ui.orion_ui import (
     render_number_balls,
 )
 
-APP_TITLE = "ORION v2.7 — SuperEnalotto Quant Engine"
+APP_TITLE = "ORION v2.7.2 — SuperEnalotto Quant Engine"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🌌", layout="wide")
@@ -107,6 +108,25 @@ def archive_analytics_cached(
     return archive_analytics(dataframe_to_history(dataframe), association_limit)
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def build_forge_snapshot_cached(
+    raw_records: tuple[tuple[Any, ...], ...],
+) -> dict[str, Any]:
+    dataframe = pd.DataFrame(
+        raw_records,
+        columns=[
+            "data", "anno", "concorso", "n1", "n2", "n3", "n4", "n5", "n6", "jolly", "superstar"
+        ],
+    )
+    dataframe["data"] = pd.to_datetime(dataframe["data"])
+    dataframe["jolly"] = (
+        pd.to_numeric(dataframe["jolly"])
+        .mask(lambda values: values.eq(0))
+        .astype("Int64")
+    )
+    return build_forge_snapshot(dataframe)
+
+
 def initialize_state() -> None:
     if "single_result" not in st.session_state:
         st.session_state.single_result = None
@@ -122,12 +142,19 @@ def render_sidebar(
     archive: pd.DataFrame,
     orion: dict[str, Any],
     archive_source: str,
-) -> None:
+) -> str:
     latest = archive.sort_values(["data", "concorso"]).iloc[-1]
     brief = build_orion_brief(orion)
 
     st.sidebar.markdown("## ✦ ORION")
     st.sidebar.caption("Quant Engine · modalità automatica")
+    navigation = st.sidebar.radio(
+        "Navigazione",
+        ["Home", "Genera", "Schedine", "Archivio", "Impostazioni"],
+        key="orion_navigation",
+        label_visibility="collapsed",
+    )
+    st.sidebar.divider()
     st.sidebar.metric("Archivio", f"{len(archive):,}".replace(",", "."))
     st.sidebar.metric("Ultimo concorso", f"{int(latest['concorso'])}/{int(latest['anno'])}")
     st.sidebar.metric("Coerenza", brief["coherence"])
@@ -136,13 +163,14 @@ def render_sidebar(
     )
     st.sidebar.divider()
     st.sidebar.markdown(
-        "ORION sceglie automaticamente finestre, pesi, vincoli e candidati. "
-        "Le sezioni tecniche restano disponibili, ma non servono per generare una proposta."
+        "ORION e FORGE lavorano automaticamente. L’utente vede soltanto le funzioni "
+        "necessarie per generare, salvare e controllare le schedine."
     )
     st.sidebar.caption(
         "Il SuperEnalotto resta un gioco casuale. Il motore ordina dati e criteri; "
         "non crea probabilità aggiuntiva."
     )
+    return str(navigation)
 
 
 def render_single_tab(
@@ -883,6 +911,103 @@ def render_data_and_verification_tab(
         render_backtest_tab(archive)
 
 
+def render_home_view(
+    archive: pd.DataFrame,
+    orion: dict[str, Any],
+    forge: dict[str, Any],
+    archive_source: str,
+    database_error: str | None,
+) -> None:
+    render_hero(orion["version"], orion["status"], orion["signature"])
+    latest = archive.sort_values(["data", "concorso"]).iloc[-1]
+    brief = build_orion_brief(orion)
+
+    metric_columns = st.columns(4)
+    metric_columns[0].metric(
+        "Ultimo concorso", f"{int(latest['concorso'])}/{int(latest['anno'])}"
+    )
+    metric_columns[1].metric("Archivio", f"{len(archive):,}".replace(",", "."))
+    metric_columns[2].metric(
+        "Modello attivo", str(orion.get("model_id", "ORION-BALANCED"))
+    )
+    metric_columns[3].metric("Stato", "Stabile" if forge["state"] == "stable" else "Protetto")
+
+    st.caption(
+        f"Fonte dati: **{archive_source}** · archivio aggiornato al "
+        f"{pd.Timestamp(latest['data']):%d/%m/%Y} · coerenza {brief['coherence'].lower()}."
+    )
+    if database_error and archive_source != "Supabase":
+        st.warning("Supabase non è disponibile: ORION sta usando il CSV di sicurezza.")
+
+    primary = tuple(orion["primary"])
+    superstar = int(orion["superstar_ranking"][0][0])
+    st.subheader("Ultima proposta ORION")
+    render_number_balls(primary, superstar, label="Proposta principale")
+
+    def open_generate() -> None:
+        st.session_state["orion_navigation"] = "Genera"
+
+    st.button(
+        "Genera nuova proposta",
+        type="primary",
+        use_container_width=True,
+        on_click=open_generate,
+    )
+
+
+def render_settings_view(
+    archive: pd.DataFrame,
+    forge: dict[str, Any],
+    archive_source: str,
+    database_error: str | None,
+) -> None:
+    st.subheader("Impostazioni")
+    st.caption(
+        "ORION è configurato per funzionare in automatico. Non ci sono pesi, finestre "
+        "o filtri statistici da regolare manualmente."
+    )
+
+    active = forge.get("active_model")
+    columns = st.columns(4)
+    columns[0].metric("Fonte dati", archive_source)
+    columns[1].metric("FORGE", "Attivo")
+    columns[2].metric("Candidati validi", int(forge.get("valid_count", 0)))
+    columns[3].metric(
+        "Modello", str(active.get("model_id")) if active else "Profilo protetto"
+    )
+
+    st.markdown("#### Automazione")
+    st.markdown(
+        "- FORGE crea e confronta i modelli candidati senza intervento manuale.\n"
+        "- Gli esperimenti già respinti o falliti sullo stesso archivio non vengono ripetuti.\n"
+        "- ORION riceve soltanto modelli che hanno superato i controlli operativi.\n"
+        "- Se nessun candidato supera i controlli, resta attivo il profilo bilanciato protetto."
+    )
+
+    st.markdown("#### Archivio")
+    latest = archive.sort_values(["data", "concorso"]).iloc[-1]
+    archive_count = f"{len(archive):,}".replace(",", ".")
+    st.write(
+        f"{archive_count} estrazioni disponibili, aggiornate al "
+        f"{pd.Timestamp(latest['data']):%d/%m/%Y}."
+    )
+    if database_error:
+        st.info("La connessione principale non è disponibile; il CSV locale resta operativo.")
+
+    with st.expander("Stato tecnico di FORGE", expanded=False):
+        st.json(
+            {
+                "stato": forge.get("state"),
+                "registro": forge.get("registry"),
+                "candidati": forge.get("candidate_count"),
+                "validi": forge.get("valid_count"),
+                "respinti": forge.get("rejected_count"),
+                "falliti": forge.get("failed_count"),
+                "esperimenti_saltati_perche_gia_noti": forge.get("skipped_known"),
+            }
+        )
+
+
 def main() -> None:
     apply_orion_theme()
     try:
@@ -895,50 +1020,23 @@ def main() -> None:
 
     initialize_state()
     archive = repository_archive
-    history = dataframe_to_history(archive)
-    orion = build_orion_snapshot(archive)
-    metrics = calculate_metrics(history)
-    scores = orion["score"]
-    superstar_ranking = orion["superstar_ranking"]
-    snapshot = archive_snapshot(archive)
-    brief = build_orion_brief(orion)
-
-    render_sidebar(archive, orion, archive_source)
-    render_hero(orion["version"], orion["status"], orion["signature"])
-
-    latest = archive.sort_values(["data", "concorso"]).iloc[-1]
-    metric_columns = st.columns(4)
-    metric_columns[0].metric(
-        "Ultimo concorso", f"{int(latest['concorso'])}/{int(latest['anno'])}"
-    )
-    metric_columns[1].metric("Archivio", f"{len(archive):,}".replace(",", "."))
-    metric_columns[2].metric("Memorie attive", len(orion["memories"]))
-    metric_columns[3].metric("Coerenza modello", brief["coherence"])
-
-    st.caption(
-        f"Fonte dati: **{archive_source}** · snapshot `{snapshot['sha256'][:16]}` · "
-        f"{snapshot['date_min']:%d/%m/%Y}–{snapshot['date_max']:%d/%m/%Y}"
-    )
-    if database_error and archive_source != "Supabase":
-        st.warning(
-            "Supabase non è disponibile: ORION sta usando il CSV di sicurezza. "
-            f"Dettaglio tecnico: {database_error}"
-        )
-
+    with st.spinner("FORGE verifica i modelli disponibili..."):
+        forge = build_forge_snapshot_cached(records_tuple(archive))
+    orion = build_orion_snapshot(archive, forge)
     database_available = archive_source == "Supabase" and database_error is None
-    orion_tab, systems_tab, monitored_tab, data_tab = st.tabs(
-        ["ORION", "Sistemi", "Le mie schedine", "Dati e verifica"]
-    )
-    with orion_tab:
+
+    navigation = render_sidebar(archive, orion, archive_source)
+    if navigation == "Home":
+        render_home_view(archive, orion, forge, archive_source, database_error)
+    elif navigation == "Genera":
+        render_hero(orion["version"], orion["status"], orion["signature"])
         render_single_tab(orion, archive, database_available)
-    with systems_tab:
-        render_systems_tab(scores, superstar_ranking)
-    with monitored_tab:
+    elif navigation == "Schedine":
         render_monitored_tickets_tab(archive, database_available)
-    with data_tab:
-        render_data_and_verification_tab(
-            archive, metrics, scores, superstar_ranking
-        )
+    elif navigation == "Archivio":
+        render_archive_tab(archive)
+    else:
+        render_settings_view(archive, forge, archive_source, database_error)
 
 
 if __name__ == "__main__":

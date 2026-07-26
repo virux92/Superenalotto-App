@@ -6,7 +6,7 @@ from statistics import mean, pstdev
 from typing import Any
 
 from core.combinations import combination_features
-from core.metrics import calculate_metrics, min_max_scale
+from core.metrics import DEFAULT_WEIGHTS, MetricWeights, calculate_metrics, min_max_scale
 
 
 @dataclass(frozen=True)
@@ -18,7 +18,7 @@ class OrionMemory:
 
 @dataclass(frozen=True)
 class OrionPolicy:
-    version: str = "2.7.1"
+    version: str = "2.7.2"
     memories: tuple[OrionMemory, ...] = (
         OrionMemory("Breve", 25, 0.10),
         OrionMemory("Operativa", 50, 0.20),
@@ -72,7 +72,9 @@ def _structural_profile(history: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def calculate_orion_state(
-    history: list[dict[str, Any]], policy: OrionPolicy = DEFAULT_POLICY
+    history: list[dict[str, Any]],
+    policy: OrionPolicy = DEFAULT_POLICY,
+    metric_weights: MetricWeights = DEFAULT_WEIGHTS,
 ) -> dict[str, Any]:
     """Calcola il consenso multi-finestra di ORION senza parametri utente.
 
@@ -90,7 +92,7 @@ def calculate_orion_state(
 
     for memory in memories:
         sample = history if memory.size is None else history[: memory.size]
-        metrics = calculate_metrics(sample)
+        metrics = calculate_metrics(sample, metric_weights)
         memory_metrics[memory.name] = metrics
         for number in range(1, 91):
             value = float(metrics["score"][number])
@@ -127,6 +129,11 @@ def calculate_orion_state(
         "structural": _structural_profile(history),
         "candidate_pool": policy.candidate_pool,
         "candidate_limit": policy.candidate_limit,
+        "metric_weights": {
+            "frequency": metric_weights.normalized().frequency,
+            "delay": metric_weights.normalized().delay,
+            "recency": metric_weights.normalized().recency,
+        },
     }
 
 

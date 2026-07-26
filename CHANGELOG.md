@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.7.2 — FORGE automatico e menu essenziale
+
+- Mantenuta invariata l’identità grafica della v2.7.1.
+- Eliminato il Laboratorio dall’interfaccia Streamlit.
+- Ridotto il menu a Home, Genera, Schedine, Archivio e Impostazioni.
+- Aggiunto FORGE per generazione automatica, backtest e confronto dei modelli candidati.
+- Aggiunto un gate operativo che impedisce la promozione di candidati respinti o falliti.
+- Aggiunto il registro `forge_experiments`, creato automaticamente su Supabase.
+- Aggiunto fallback locale e riuso degli esperimenti già conclusi sullo stesso archivio.
+- Collegato ORION ai pesi del modello validato e promosso da FORGE.
+- Suite totale: 25 test.
+
 ## 2.7.1 — Correzione leggibilità sidebar
 
 - Aumentato il contrasto dei tre riquadri riepilogativi nella barra laterale.
