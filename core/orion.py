@@ -25,7 +25,7 @@ class OrionPolicy:
     esperimenti FORGE.
     """
 
-    version: str = "2.7.4"
+    version: str = "2.7.4.1"
     memories: tuple[OrionMemory, ...] = (
         OrionMemory("Breve", 25, 0.10),
         OrionMemory("Operativa", 50, 0.20),

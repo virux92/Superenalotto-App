@@ -43,6 +43,7 @@ def _fake_database_module() -> types.ModuleType:
         return {"mode": record["mode"]}
 
     def save_forge_prediction(record):
+        inserted = record["prediction_key"] not in module.predictions
         module.predictions.setdefault(
             record["prediction_key"],
             {
@@ -51,7 +52,10 @@ def _fake_database_module() -> types.ModuleType:
                 "status": "pending",
             },
         )
-        return {"prediction_key": record["prediction_key"]}
+        return {
+            "prediction_key": record["prediction_key"],
+            "inserted": inserted,
+        }
 
     def fetch_pending_forge_predictions():
         return [
@@ -103,6 +107,7 @@ def test_supabase_registry_survives_local_cache_loss(monkeypatch, tmp_path: Path
     assert second["executed_now"] == 0
     assert second["skipped_known"] == 5
     assert second["active_model"]["model_id"] == "ORION-BALANCED"
+    assert second["predictions_saved_now"] == 0
 
     third = forge_service.build_forge_snapshot(synthetic_archive(91))
     assert third["persistence_ok"] is True

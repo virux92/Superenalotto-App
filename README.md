@@ -1,10 +1,13 @@
 # ORION — SuperEnalotto Quant Engine
 
-Versione **2.7.4**.
+Versione **2.7.4.1**.
 
 ORION è un motore statistico multi-memoria con interfaccia Streamlit. FORGE 2 lavora dietro le quinte in modalità **champion/challenger**: il profilo bilanciato resta attivo, mentre un challenger viene osservato senza influenzare le schedine live finché non supera una verifica prospettica su estrazioni future.
 
-## Cosa cambia nella 2.7.4
+## Cosa cambia nella 2.7.4.1
+
+- Corretto `previsioni_salvate_ora`: ora conta soltanto le righe realmente inserite in Supabase e resta a zero dopo un reboot senza nuove previsioni.
+- Nessuna modifica agli algoritmi, al champion, al challenger o ai dati FORGE già persistiti.
 
 - Il live e i backtest usano la stessa funzione pura `generate_orion_proposal`.
 - Eliminato il proxy FORGE che testava un algoritmo diverso da quello realmente usato.

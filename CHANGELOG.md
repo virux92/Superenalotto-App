@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.7.4.1 — Contatore previsioni persistenti
+
+- `save_forge_prediction` comunica ora se `ON CONFLICT DO NOTHING` ha inserito realmente una riga.
+- `previsioni_salvate_ora` aumenta soltanto per nuovi record e resta a `0` dopo un reboot sullo stesso archivio.
+- Aggiunto un test di regressione sulla perdita della cache locale e sul riavvio con Supabase persistente.
+- Nessuna variazione agli algoritmi ORION/FORGE o alle soglie di promozione.
+
 ## 2.7.4 — Pipeline unica e FORGE shadow persistente
 
 - Unificata la generazione live e di backtest in `generate_orion_proposal`.

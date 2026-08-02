@@ -267,7 +267,7 @@ def _save_current_predictions(
                 metric_weights=weights_from_record(model),
                 policy=DEFAULT_POLICY,
             )
-            save_forge_prediction(
+            result = save_forge_prediction(
                 {
                     "prediction_key": _prediction_key(
                         archive_signature, role, str(model["model_id"])
@@ -283,7 +283,8 @@ def _save_current_predictions(
                     "numbers": tuple(proposal["primary"]),
                 }
             )
-            saved += 1
+            if bool(result.get("inserted")):
+                saved += 1
     except Exception as exc:
         return saved, f"{type(exc).__name__}: {exc}"
     return saved, None

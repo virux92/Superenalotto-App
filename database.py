@@ -567,7 +567,7 @@ def save_forge_state(record: Mapping[str, object]) -> dict[str, object]:
     return dict(saved)
 
 
-def save_forge_prediction(record: Mapping[str, object]) -> dict[str, str]:
+def save_forge_prediction(record: Mapping[str, object]) -> dict[str, object]:
     ensure_forge_v2_tables()
     numbers = tuple(sorted(int(value) for value in record["numbers"]))
     if len(numbers) != 6 or len(set(numbers)) != 6:
@@ -609,7 +609,8 @@ def save_forge_prediction(record: Mapping[str, object]) -> dict[str, str]:
     return {
         "prediction_key": (
             str(saved["prediction_key"]) if saved else str(record["prediction_key"])
-        )
+        ),
+        "inserted": saved is not None,
     }
 
 
