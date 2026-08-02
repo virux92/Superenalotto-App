@@ -1,31 +1,107 @@
-# ORION — SuperEnalotto Quant Engine
+## 2.7.3 — Ripristino sistemi utente
 
-Versione **2.7.2**.
+- Ripristinata la creazione dei sistemi nella pagina Genera.
+- Aggiunte le sezioni Proposta singola e Sistema.
+- Mantenuti soltanto tre profili semplici, senza parametri da analista.
+- Ripristinata la visualizzazione del costo prima e dopo la generazione.
+- Il Laboratorio resta escluso dall'interfaccia e FORGE continua a operare dietro le quinte.
 
-ORION è un motore statistico multi-memoria con interfaccia Streamlit. FORGE lavora dietro le quinte: genera modelli candidati, li sottopone a backtest walk-forward, registra gli esperimenti già conclusi e promuove a ORION soltanto i candidati che superano i controlli operativi.
+# Changelog
 
-## Menu utente
+## 2.7.2 — FORGE automatico e menu essenziale
 
-L’interfaccia espone soltanto cinque sezioni:
+- Mantenuta invariata l’identità grafica della v2.7.1.
+- Eliminato il Laboratorio dall’interfaccia Streamlit.
+- Ridotto il menu a Home, Genera, Schedine, Archivio e Impostazioni.
+- Aggiunto FORGE per generazione automatica, backtest e confronto dei modelli candidati.
+- Aggiunto un gate operativo che impedisce la promozione di candidati respinti o falliti.
+- Aggiunto il registro `forge_experiments`, creato automaticamente su Supabase.
+- Aggiunto fallback locale e riuso degli esperimenti già conclusi sullo stesso archivio.
+- Collegato ORION ai pesi del modello validato e promosso da FORGE.
+- Suite totale: 25 test.
 
-- **Home**
-- **Genera**
-- **Schedine**
-- **Archivio**
-- **Impostazioni**
+## 2.7.1 — Correzione leggibilità sidebar
 
-Pesi, finestre statistiche, filtri tecnici e comandi del vecchio Laboratorio non sono più esposti.
+- Aumentato il contrasto dei tre riquadri riepilogativi nella barra laterale.
+- Sostituito il fondo quasi bianco con pannelli scuri semitrasparenti.
+- Ingranditi valori, etichette, didascalie e testo informativo della sidebar.
+- Rafforzati bordi e separatori per mantenere la leggibilità su monitor ad alta risoluzione.
 
-## Architettura
+## 2.7.0 — ORION User Experience
 
-- `app.py`: interfaccia principale e navigazione essenziale;
-- `core/orion.py`: consenso multi-memoria e costruzione dello stato ORION;
-- `core/forge.py`: definizione, identificazione, validazione e promozione dei modelli candidati;
-- `services/forge_service.py`: esecuzione automatica dei backtest e registro degli esperimenti;
-- `database.py`: archivio Supabase, schedine monitorate e registro persistente FORGE;
-- `ui/`: tema e componenti grafici già introdotti nella v2.7;
-- `tests/`: controlli automatici del motore.
+- Ridisegnata la home con interfaccia moderna e orientata all’utente finale.
+- Mostrata automaticamente la proposta principale ORION.
+- Aggiunte sfere numeriche, pannello di coerenza e spiegazione della selezione.
+- Rese deterministiche e sequenziali le alternative tra i migliori candidati.
+- Introdotti profili di sistema semplici: Compatto, Equilibrato e Integrale 7 numeri.
+- Spostati archivio, statistiche e backtest nella sezione “Dati e verifica”.
+- Aggiunti `services/presentation_service.py` e `ui/orion_ui.py`.
+- Aggiornata la versione del motore a ORION 2.7.0.
+- Suite totale: 22 test.
 
-La fonte principale è Supabase, con fallback sul CSV del repository. FORGE usa Supabase per ricordare gli esperimenti quando disponibile e un registro locale di emergenza negli altri casi.
+## 2.5.1
 
-Il software organizza dati storici ed euristiche. Non può prevedere estrazioni casuali e non modifica la probabilità matematica della singola sestina.
+- Corretto il campo SuperStar nel modulo di registrazione manuale delle schedine.
+- Il checkbox ora abilita immediatamente il numero SuperStar, senza attendere l'invio del form.
+
+## v2.0.0 — Database First stabile
+
+- Supabase resta la fonte primaria dell'archivio.
+- Corretto il caricamento PostgreSQL eliminando `pandas.read_sql_query` su connessione psycopg diretta.
+- Creato `services/archive_service.py` come unico punto di caricamento, normalizzazione e validazione.
+- Aggiunto fallback automatico e diagnostico al CSV del repository.
+- Aggiunta protezione contro eventuali righe d'intestazione lette come dati.
+- Conservate le funzioni esistenti: statistiche, sestine, sistemi, backtest, archivio e amministrazione database.
+
+## v2.1 — Motore modulare
+- Estratte metriche e ranking SuperStar in `core/metrics.py`.
+- Estratti filtri, scoring e sistemi in `core/combinations.py`.
+- Estratto il backtest walk-forward in `core/backtest.py`.
+- `app.py` conserva la UI e usa il motore tramite import stabili.
+- Nessuna modifica alle formule o al comportamento della v2.0.
+
+## v2.2 — Statistiche avanzate e validazione
+- Creato `core/analytics.py` con strutture, decine, entropia, coppie, terzine, ripetizioni e stabilità annuale.
+- Estratte le operazioni sulle estrazioni in `services/draw_service.py`.
+- Aggiunto hash SHA-256 canonico dell'archivio e confronto Supabase/CSV.
+- Aggiunto benchmark casuale deterministico e riproducibile al backtest.
+- Aggiunte deviazione standard, intervallo di confidenza e stabilità annuale.
+- Aggiunta suite di test automatici per archivio, metriche, analytics e assenza di future leakage.
+
+## 2.3.0
+- Aggiunto il Laboratorio sperimentale in una pagina dedicata.
+- Introdotti sei profili di scoring confrontabili con backtest walk-forward.
+- Aggiunto confronto appaiato con baseline casuale deterministica.
+- Aggiunti intervalli descrittivi, stabilità annuale ed esportazione CSV.
+- Aggiunta protezione opzionale del laboratorio tramite Streamlit Secrets.
+- Aggiunti test automatici per il motore degli esperimenti.
+
+## 2.4.0
+- Ripulita la barra laterale della home: rimossi inserimento temporaneo, import e download CSV.
+- Rimossa la copia modificabile dell'archivio da `st.session_state`.
+- Centralizzate tutte le scritture nella pagina Amministrazione Database.
+- Aggiunti inserimento permanente, correzione e cancellazione protetta dell'ultima estrazione.
+- Aggiunto svuotamento automatico della cache dopo ogni modifica a Supabase.
+- Chiarita la distinzione tra archivio vivo Supabase e CSV di emergenza GitHub.
+- Aggiunti test per inserimento e correzione delle estrazioni.
+
+## v2.5.0 — Schedine monitorate
+
+- Aggiunta tabella Supabase `schedine_monitorate`, creata automaticamente.
+- Salvataggio persistente delle sestine generate.
+- Registrazione manuale delle schedine già giocate.
+- Monitoraggio della stessa schedina per più concorsi consecutivi.
+- Calcolo automatico dell'esito per ciascuna estrazione.
+- Segnalazione di ambo, terno, 4, 5, 5+1, 6, Jolly e SuperStar.
+- Esportazione CSV dello storico risultati.
+- Aggiunti test per due ambi consecutivi con la stessa schedina.
+
+## 2.6.0 — ORION Core
+
+- Introdotto il motore multi-memoria ORION 1.0.0.
+- Aggiunte memorie Breve, Operativa, Intermedia, Lunga e Storica.
+- Introdotti consenso multi-finestra e penalizzazione dell'instabilità.
+- Resa automatica la selezione dei vincoli strutturali.
+- Rimossi dalla generazione singola finestra, pesi e filtri manuali.
+- Aggiunti firma modello e stato del motore nella dashboard.
+- Aggiunti test dedicati; suite totale: 20 test.
