@@ -1,372 +1,107 @@
-from __future__ import annotations
+## 2.7.3 — Ripristino sistemi utente
 
-from html import escape
-from typing import Iterable
+- Ripristinata la creazione dei sistemi nella pagina Genera.
+- Aggiunte le sezioni Proposta singola e Sistema.
+- Mantenuti soltanto tre profili semplici, senza parametri da analista.
+- Ripristinata la visualizzazione del costo prima e dopo la generazione.
+- Il Laboratorio resta escluso dall'interfaccia e FORGE continua a operare dietro le quinte.
 
-import streamlit as st
+# Changelog
 
+## 2.7.2 — FORGE automatico e menu essenziale
 
-def apply_orion_theme() -> None:
-    st.markdown(
-        """
-        <style>
-        :root {
-            --orion-navy: #10152f;
-            --orion-indigo: #4f46e5;
-            --orion-violet: #7c3aed;
-            --orion-cyan: #06b6d4;
-            --orion-ink: #172033;
-            --orion-muted: #64748b;
-            --orion-border: rgba(79, 70, 229, 0.14);
-            --orion-surface: rgba(255, 255, 255, 0.92);
-        }
+- Mantenuta invariata l’identità grafica della v2.7.1.
+- Eliminato il Laboratorio dall’interfaccia Streamlit.
+- Ridotto il menu a Home, Genera, Schedine, Archivio e Impostazioni.
+- Aggiunto FORGE per generazione automatica, backtest e confronto dei modelli candidati.
+- Aggiunto un gate operativo che impedisce la promozione di candidati respinti o falliti.
+- Aggiunto il registro `forge_experiments`, creato automaticamente su Supabase.
+- Aggiunto fallback locale e riuso degli esperimenti già conclusi sullo stesso archivio.
+- Collegato ORION ai pesi del modello validato e promosso da FORGE.
+- Suite totale: 25 test.
 
-        .stApp {
-            background:
-                radial-gradient(circle at 8% 0%, rgba(99, 102, 241, 0.10), transparent 28rem),
-                radial-gradient(circle at 96% 12%, rgba(6, 182, 212, 0.08), transparent 26rem),
-                #f7f8fc;
-        }
+## 2.7.1 — Correzione leggibilità sidebar
 
-        [data-testid="stHeader"] { background: rgba(247, 248, 252, 0.72); }
-        [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #10152f 0%, #17143c 54%, #10152f 100%);
-            border-right: 1px solid rgba(255,255,255,0.08);
-        }
-        [data-testid="stSidebar"] h1,
-        [data-testid="stSidebar"] h2,
-        [data-testid="stSidebar"] h3,
-        [data-testid="stSidebar"] p,
-        [data-testid="stSidebar"] label,
-        [data-testid="stSidebar"] [data-testid="stMetricValue"],
-        [data-testid="stSidebar"] [data-testid="stMetricLabel"] {
-            color: #f8fafc !important;
-        }
-        [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
-            color: #cbd5e1 !important;
-        }
+- Aumentato il contrasto dei tre riquadri riepilogativi nella barra laterale.
+- Sostituito il fondo quasi bianco con pannelli scuri semitrasparenti.
+- Ingranditi valori, etichette, didascalie e testo informativo della sidebar.
+- Rafforzati bordi e separatori per mantenere la leggibilità su monitor ad alta risoluzione.
 
-        .block-container {
-            max-width: 1420px;
-            padding-top: 1.5rem;
-            padding-bottom: 4rem;
-        }
+## 2.7.0 — ORION User Experience
 
-        div[data-testid="stMetric"] {
-            background: var(--orion-surface);
-            border: 1px solid var(--orion-border);
-            border-radius: 18px;
-            padding: 1rem 1.1rem;
-            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.05);
-        }
-        div[data-testid="stMetric"] [data-testid="stMetricValue"] {
-            color: var(--orion-ink);
-            font-weight: 760;
-        }
+- Ridisegnata la home con interfaccia moderna e orientata all’utente finale.
+- Mostrata automaticamente la proposta principale ORION.
+- Aggiunte sfere numeriche, pannello di coerenza e spiegazione della selezione.
+- Rese deterministiche e sequenziali le alternative tra i migliori candidati.
+- Introdotti profili di sistema semplici: Compatto, Equilibrato e Integrale 7 numeri.
+- Spostati archivio, statistiche e backtest nella sezione “Dati e verifica”.
+- Aggiunti `services/presentation_service.py` e `ui/orion_ui.py`.
+- Aggiornata la versione del motore a ORION 2.7.0.
+- Suite totale: 22 test.
 
-        /* Sidebar: contrasto alto e testo leggibile anche su schermi grandi. */
-        [data-testid="stSidebar"] div[data-testid="stMetric"] {
-            background: linear-gradient(
-                135deg,
-                rgba(255, 255, 255, 0.16),
-                rgba(255, 255, 255, 0.08)
-            ) !important;
-            border: 1px solid rgba(255, 255, 255, 0.22) !important;
-            border-radius: 14px;
-            padding: .82rem .9rem;
-            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.16);
-        }
-        [data-testid="stSidebar"] div[data-testid="stMetric"] [data-testid="stMetricLabel"],
-        [data-testid="stSidebar"] div[data-testid="stMetric"] [data-testid="stMetricLabel"] p {
-            color: #cbd5e1 !important;
-            font-size: .78rem !important;
-            font-weight: 750 !important;
-            line-height: 1.25 !important;
-        }
-        [data-testid="stSidebar"] div[data-testid="stMetric"] [data-testid="stMetricValue"] {
-            color: #ffffff !important;
-            font-size: 1.34rem !important;
-            font-weight: 850 !important;
-            line-height: 1.15 !important;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
-        }
-        [data-testid="stSidebar"] p {
-            font-size: .90rem;
-            line-height: 1.55;
-        }
-        [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
-            color: #d8e0ec !important;
-            font-size: .79rem !important;
-            line-height: 1.45 !important;
-        }
-        [data-testid="stSidebar"] hr {
-            border-color: rgba(255, 255, 255, 0.15) !important;
-        }
+## 2.5.1
 
-        .stButton > button,
-        .stDownloadButton > button {
-            border-radius: 14px;
-            min-height: 2.9rem;
-            font-weight: 700;
-            border: 1px solid rgba(79, 70, 229, 0.22);
-            transition: transform .14s ease, box-shadow .14s ease;
-        }
-        .stButton > button:hover,
-        .stDownloadButton > button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 10px 24px rgba(79, 70, 229, 0.14);
-        }
-        .stButton > button[kind="primary"] {
-            color: white;
-            border: 0;
-            background: linear-gradient(110deg, var(--orion-indigo), var(--orion-violet));
-        }
+- Corretto il campo SuperStar nel modulo di registrazione manuale delle schedine.
+- Il checkbox ora abilita immediatamente il numero SuperStar, senza attendere l'invio del form.
 
-        button[data-baseweb="tab"] {
-            border-radius: 12px 12px 0 0;
-            font-weight: 700;
-        }
+## v2.0.0 — Database First stabile
 
-        .orion-hero {
-            position: relative;
-            overflow: hidden;
-            padding: 1.7rem 1.8rem;
-            border-radius: 24px;
-            color: white;
-            background:
-                radial-gradient(circle at 84% 8%, rgba(34, 211, 238, .34), transparent 19rem),
-                linear-gradient(120deg, #111936 0%, #312e81 52%, #6d28d9 100%);
-            box-shadow: 0 24px 60px rgba(49, 46, 129, 0.22);
-            margin-bottom: 1.15rem;
-        }
-        .orion-hero:after {
-            content: "";
-            position: absolute;
-            width: 16rem;
-            height: 16rem;
-            right: -5rem;
-            bottom: -9rem;
-            border: 1px solid rgba(255,255,255,.20);
-            border-radius: 999px;
-            box-shadow: 0 0 0 2.5rem rgba(255,255,255,.035), 0 0 0 5rem rgba(255,255,255,.025);
-        }
-        .orion-eyebrow {
-            display: inline-flex;
-            align-items: center;
-            gap: .45rem;
-            font-size: .76rem;
-            font-weight: 800;
-            letter-spacing: .12em;
-            text-transform: uppercase;
-            color: #a5f3fc;
-            margin-bottom: .55rem;
-        }
-        .orion-hero h1 {
-            color: white;
-            font-size: clamp(2rem, 4vw, 3.45rem);
-            line-height: 1.02;
-            margin: 0 0 .6rem 0;
-            letter-spacing: -.045em;
-        }
-        .orion-hero p {
-            max-width: 58rem;
-            color: #e2e8f0;
-            font-size: 1rem;
-            margin: 0;
-        }
-        .orion-badge-row { display: flex; gap: .55rem; flex-wrap: wrap; margin-top: 1rem; }
-        .orion-badge {
-            display: inline-flex;
-            padding: .38rem .68rem;
-            border-radius: 999px;
-            background: rgba(255,255,255,.12);
-            border: 1px solid rgba(255,255,255,.16);
-            color: white;
-            font-size: .79rem;
-            font-weight: 700;
-            backdrop-filter: blur(8px);
-        }
+- Supabase resta la fonte primaria dell'archivio.
+- Corretto il caricamento PostgreSQL eliminando `pandas.read_sql_query` su connessione psycopg diretta.
+- Creato `services/archive_service.py` come unico punto di caricamento, normalizzazione e validazione.
+- Aggiunto fallback automatico e diagnostico al CSV del repository.
+- Aggiunta protezione contro eventuali righe d'intestazione lette come dati.
+- Conservate le funzioni esistenti: statistiche, sestine, sistemi, backtest, archivio e amministrazione database.
 
-        .orion-panel {
-            background: var(--orion-surface);
-            border: 1px solid var(--orion-border);
-            border-radius: 20px;
-            padding: 1.2rem 1.25rem;
-            box-shadow: 0 14px 36px rgba(15, 23, 42, 0.055);
-            margin: .35rem 0 1rem 0;
-        }
-        .orion-panel-title {
-            color: var(--orion-ink);
-            font-size: 1rem;
-            font-weight: 800;
-            margin-bottom: .35rem;
-        }
-        .orion-panel-copy { color: var(--orion-muted); font-size: .92rem; line-height: 1.5; }
+## v2.1 — Motore modulare
+- Estratte metriche e ranking SuperStar in `core/metrics.py`.
+- Estratti filtri, scoring e sistemi in `core/combinations.py`.
+- Estratto il backtest walk-forward in `core/backtest.py`.
+- `app.py` conserva la UI e usa il motore tramite import stabili.
+- Nessuna modifica alle formule o al comportamento della v2.0.
 
-        .orion-ticket {
-            background: linear-gradient(145deg, #ffffff, #f6f5ff);
-            border: 1px solid rgba(99, 102, 241, .18);
-            border-radius: 22px;
-            padding: 1.25rem;
-            box-shadow: 0 18px 42px rgba(49, 46, 129, .08);
-            margin: .65rem 0 1rem 0;
-        }
-        .orion-ticket-label {
-            color: #6366f1;
-            font-size: .74rem;
-            letter-spacing: .10em;
-            text-transform: uppercase;
-            font-weight: 850;
-            margin-bottom: .75rem;
-        }
-        .orion-balls { display: flex; flex-wrap: wrap; align-items: center; gap: .72rem; }
-        .orion-ball {
-            width: 3.35rem;
-            height: 3.35rem;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 999px;
-            color: white;
-            font-size: 1.22rem;
-            font-weight: 850;
-            background: linear-gradient(145deg, #4f46e5, #7c3aed);
-            box-shadow: inset 0 1px 1px rgba(255,255,255,.38), 0 8px 18px rgba(79,70,229,.22);
-        }
-        .orion-ball.compact { width: 2.35rem; height: 2.35rem; font-size: .95rem; }
-        .orion-plus { color: #94a3b8; font-weight: 800; padding: 0 .15rem; }
-        .orion-superstar {
-            min-width: 3.35rem;
-            height: 3.35rem;
-            padding: 0 .8rem;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: .35rem;
-            border-radius: 999px;
-            color: #3f2b00;
-            font-size: 1.08rem;
-            font-weight: 850;
-            background: linear-gradient(145deg, #fde68a, #f59e0b);
-            box-shadow: inset 0 1px 1px rgba(255,255,255,.55), 0 8px 18px rgba(245,158,11,.20);
-        }
-        .orion-superstar.compact { min-width: 2.35rem; height: 2.35rem; font-size: .88rem; padding: 0 .55rem; }
+## v2.2 — Statistiche avanzate e validazione
+- Creato `core/analytics.py` con strutture, decine, entropia, coppie, terzine, ripetizioni e stabilità annuale.
+- Estratte le operazioni sulle estrazioni in `services/draw_service.py`.
+- Aggiunto hash SHA-256 canonico dell'archivio e confronto Supabase/CSV.
+- Aggiunto benchmark casuale deterministico e riproducibile al backtest.
+- Aggiunte deviazione standard, intervallo di confidenza e stabilità annuale.
+- Aggiunta suite di test automatici per archivio, metriche, analytics e assenza di future leakage.
 
-        .orion-chip-row { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .65rem; }
-        .orion-chip {
-            display: inline-flex;
-            align-items: center;
-            gap: .3rem;
-            padding: .34rem .58rem;
-            border-radius: 999px;
-            background: #eef2ff;
-            color: #4338ca;
-            border: 1px solid #dfe4ff;
-            font-size: .82rem;
-            font-weight: 750;
-        }
-        .orion-progress {
-            height: .58rem;
-            overflow: hidden;
-            border-radius: 999px;
-            background: #e8eaf4;
-            margin-top: .55rem;
-        }
-        .orion-progress > span {
-            display: block;
-            height: 100%;
-            border-radius: inherit;
-            background: linear-gradient(90deg, #4f46e5, #06b6d4);
-        }
-        .orion-disclaimer {
-            color: #64748b;
-            font-size: .78rem;
-            line-height: 1.45;
-            padding-top: .5rem;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+## 2.3.0
+- Aggiunto il Laboratorio sperimentale in una pagina dedicata.
+- Introdotti sei profili di scoring confrontabili con backtest walk-forward.
+- Aggiunto confronto appaiato con baseline casuale deterministica.
+- Aggiunti intervalli descrittivi, stabilità annuale ed esportazione CSV.
+- Aggiunta protezione opzionale del laboratorio tramite Streamlit Secrets.
+- Aggiunti test automatici per il motore degli esperimenti.
 
+## 2.4.0
+- Ripulita la barra laterale della home: rimossi inserimento temporaneo, import e download CSV.
+- Rimossa la copia modificabile dell'archivio da `st.session_state`.
+- Centralizzate tutte le scritture nella pagina Amministrazione Database.
+- Aggiunti inserimento permanente, correzione e cancellazione protetta dell'ultima estrazione.
+- Aggiunto svuotamento automatico della cache dopo ogni modifica a Supabase.
+- Chiarita la distinzione tra archivio vivo Supabase e CSV di emergenza GitHub.
+- Aggiunti test per inserimento e correzione delle estrazioni.
 
-def render_hero(version: str, status: str, signature: str) -> None:
-    st.markdown(
-        f"""
-        <section class="orion-hero">
-            <div class="orion-eyebrow">✦ Analisi automatica multi-memoria</div>
-            <h1>ORION <span style="color:#a5f3fc">v{escape(version)}</span></h1>
-            <p>Un’interfaccia semplice sopra un motore rigoroso: ORION analizza lo storico, fonde cinque memorie statistiche e costruisce la proposta senza scaricare sull’utente decine di parametri inutili.</p>
-            <div class="orion-badge-row">
-                <span class="orion-badge">Stato: {escape(status.title())}</span>
-                <span class="orion-badge">Firma: {escape(signature)}</span>
-                <span class="orion-badge">Nessuna previsione certa</span>
-            </div>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
+## v2.5.0 — Schedine monitorate
 
+- Aggiunta tabella Supabase `schedine_monitorate`, creata automaticamente.
+- Salvataggio persistente delle sestine generate.
+- Registrazione manuale delle schedine già giocate.
+- Monitoraggio della stessa schedina per più concorsi consecutivi.
+- Calcolo automatico dell'esito per ciascuna estrazione.
+- Segnalazione di ambo, terno, 4, 5, 5+1, 6, Jolly e SuperStar.
+- Esportazione CSV dello storico risultati.
+- Aggiunti test per due ambi consecutivi con la stessa schedina.
 
-def number_balls_html(
-    numbers: Iterable[int],
-    superstar: int | None = None,
-    *,
-    compact: bool = False,
-    label: str = "Sestina ORION",
-) -> str:
-    size_class = " compact" if compact else ""
-    balls = "".join(
-        f'<span class="orion-ball{size_class}">{int(number)}</span>'
-        for number in numbers
-    )
-    superstar_html = ""
-    if superstar is not None:
-        superstar_html = (
-            '<span class="orion-plus">+</span>'
-            f'<span class="orion-superstar{size_class}">★ {int(superstar)}</span>'
-        )
-    return (
-        '<div class="orion-ticket">'
-        f'<div class="orion-ticket-label">{escape(label)}</div>'
-        f'<div class="orion-balls">{balls}{superstar_html}</div>'
-        '</div>'
-    )
+## 2.6.0 — ORION Core
 
-
-def render_number_balls(
-    numbers: Iterable[int],
-    superstar: int | None = None,
-    *,
-    compact: bool = False,
-    label: str = "Sestina ORION",
-) -> None:
-    st.markdown(
-        number_balls_html(numbers, superstar, compact=compact, label=label),
-        unsafe_allow_html=True,
-    )
-
-
-def render_chips(items: Iterable[str]) -> None:
-    content = "".join(
-        f'<span class="orion-chip">{escape(str(item))}</span>' for item in items
-    )
-    st.markdown(
-        f'<div class="orion-chip-row">{content}</div>',
-        unsafe_allow_html=True,
-    )
-
-
-def render_coherence(stability: float, label: str) -> None:
-    percentage = max(0.0, min(1.0, float(stability))) * 100
-    st.markdown(
-        f"""
-        <div class="orion-panel">
-            <div class="orion-panel-title">Coerenza tra le memorie: {escape(label)}</div>
-            <div class="orion-panel-copy">Misura quanto i segnali delle diverse finestre concordano tra loro. Non è una probabilità di vincita.</div>
-            <div class="orion-progress"><span style="width:{percentage:.1f}%"></span></div>
-            <div class="orion-disclaimer">Indice interno: {percentage:.1f}/100</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+- Introdotto il motore multi-memoria ORION 1.0.0.
+- Aggiunte memorie Breve, Operativa, Intermedia, Lunga e Storica.
+- Introdotti consenso multi-finestra e penalizzazione dell'instabilità.
+- Resa automatica la selezione dei vincoli strutturali.
+- Rimossi dalla generazione singola finestra, pesi e filtri manuali.
+- Aggiunti firma modello e stato del motore nella dashboard.
+- Aggiunti test dedicati; suite totale: 20 test.
