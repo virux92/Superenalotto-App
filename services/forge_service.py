@@ -94,41 +94,62 @@ def _save_database_state(record: Mapping[str, Any]) -> str | None:
 
 
 def _evaluate_pending_predictions(archive: pd.DataFrame) -> tuple[int, str | None]:
+    """Valuta una sola previsione attiva per ruolo e concorso sorgente.
+
+    Le righe vengono filtrate per versione FORGE nel database. In caso di
+    duplicati o coppie incoerenti il ciclo si arresta senza attribuire risultati,
+    così un'anomalia non può gonfiare il campione prospettico.
+    """
     try:
         from database import evaluate_forge_prediction, fetch_pending_forge_predictions
 
-        pending = fetch_pending_forge_predictions()
+        pending = fetch_pending_forge_predictions(FORGE_VERSION)
     except Exception as exc:
         return 0, f"{type(exc).__name__}: {exc}"
+
+    grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for row in pending:
+        key = (int(row["source_year"]), int(row["source_contest"]))
+        grouped.setdefault(key, []).append(dict(row))
 
     chronological = archive.sort_values(["data", "anno", "concorso"]).copy()
     evaluated = 0
     try:
-        for prediction in pending:
-            source_year = int(prediction["source_year"])
-            source_contest = int(prediction["source_contest"])
-            future = chronological.loc[
-                (chronological["anno"] > source_year)
-                | (
-                    (chronological["anno"] == source_year)
-                    & (chronological["concorso"] > source_contest)
+        for (source_year, source_contest), rows in grouped.items():
+            roles = [str(row["role"]) for row in rows]
+            if len(roles) != len(set(roles)):
+                return evaluated, (
+                    "Previsioni FORGE duplicate per ruolo sul concorso "
+                    f"{source_contest}/{source_year}; valutazione bloccata."
                 )
-            ]
+
+            signatures = {str(row["archive_signature"]) for row in rows}
+            if len(signatures) != 1:
+                return evaluated, (
+                    "Coppia FORGE incoerente sul concorso "
+                    f"{source_contest}/{source_year}; valutazione bloccata."
+                )
+
+            source_date = max(pd.Timestamp(row["source_date"]) for row in rows)
+            future = chronological.loc[chronological["data"] > source_date]
             if future.empty:
                 continue
+
             target = future.iloc[0]
-            predicted = {
-                int(prediction[f"n{index}"]) for index in range(1, 7)
-            }
             extracted = {int(target[f"n{index}"]) for index in range(1, 7)}
-            evaluate_forge_prediction(
-                str(prediction["prediction_key"]),
-                target_year=int(target["anno"]),
-                target_contest=int(target["concorso"]),
-                target_date=pd.Timestamp(target["data"]).date(),
-                hits=len(predicted & extracted),
-            )
-            evaluated += 1
+            for prediction in rows:
+                predicted = {
+                    int(prediction[f"n{index}"]) for index in range(1, 7)
+                }
+                result = evaluate_forge_prediction(
+                    str(prediction["prediction_key"]),
+                    target_year=int(target["anno"]),
+                    target_contest=int(target["concorso"]),
+                    target_date=pd.Timestamp(target["data"]).date(),
+                    hits=len(predicted & extracted),
+                )
+                if result:
+                    evaluated += 1
     except Exception as exc:
         return evaluated, f"{type(exc).__name__}: {exc}"
     return evaluated, None
@@ -141,23 +162,30 @@ def _paired_prospective_results(
     try:
         from database import fetch_evaluated_forge_predictions
 
-        rows = fetch_evaluated_forge_predictions()
+        rows = fetch_evaluated_forge_predictions(FORGE_VERSION)
     except Exception as exc:
         return [], f"{type(exc).__name__}: {exc}"
 
-    grouped: dict[str, dict[str, dict[str, Any]]] = {}
+    grouped: dict[tuple[str, int, int, int, int], dict[str, dict[str, Any]]] = {}
     for row in rows:
-        signature = str(row["archive_signature"])
         role = str(row["role"])
         model_id = str(row["model_id"])
         if role == "champion" and model_id != champion_model_id:
             continue
         if role == "challenger" and model_id != challenger_model_id:
             continue
-        grouped.setdefault(signature, {})[role] = dict(row)
+        key = (
+            str(row["archive_signature"]),
+            int(row["source_year"]),
+            int(row["source_contest"]),
+            int(row["target_year"]),
+            int(row["target_contest"]),
+        )
+        grouped.setdefault(key, {})[role] = dict(row)
 
     pairs = []
-    for signature, values in grouped.items():
+    for key, values in grouped.items():
+        signature = key[0]
         if "champion" not in values or "challenger" not in values:
             continue
         champion = values["champion"]
@@ -240,6 +268,46 @@ def _prediction_key(
 ) -> str:
     material = f"{FORGE_VERSION}:{archive_signature}:{role}:{model_id}"
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _void_obsolete_current_predictions(
+    archive: pd.DataFrame,
+    archive_signature: str,
+    champion: Mapping[str, Any],
+    challenger: Mapping[str, Any] | None,
+) -> tuple[int, str | None]:
+    """Neutralizza snapshot pendenti non appartenenti alla coppia corrente."""
+    try:
+        from database import void_obsolete_pending_forge_predictions
+    except Exception as exc:
+        return 0, f"{type(exc).__name__}: {exc}"
+
+    latest = archive.sort_values(["data", "anno", "concorso"]).iloc[-1]
+    try:
+        keep_prediction_keys = [
+            _prediction_key(
+                archive_signature,
+                "champion",
+                str(champion["model_id"]),
+            )
+        ]
+        if challenger:
+            keep_prediction_keys.append(
+                _prediction_key(
+                    archive_signature,
+                    "challenger",
+                    str(challenger["model_id"]),
+                )
+            )
+        rows = void_obsolete_pending_forge_predictions(
+            forge_version=FORGE_VERSION,
+            source_year=int(latest["anno"]),
+            source_contest=int(latest["concorso"]),
+            keep_prediction_keys=keep_prediction_keys,
+        )
+    except Exception as exc:
+        return 0, f"{type(exc).__name__}: {exc}"
+    return len(rows), None
 
 
 def _save_current_predictions(
@@ -453,8 +521,9 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
                 challenger = dict(current_challenger)
 
         mode = str(database_state.get("mode", "shadow"))
-        prospective_minimum = int(
-            database_state.get("prospective_minimum", PROSPECTIVE_MINIMUM)
+        prospective_minimum = max(
+            PROSPECTIVE_MINIMUM,
+            int(database_state.get("prospective_minimum", PROSPECTIVE_MINIMUM)),
         )
 
     excluded = {str(champion.get("model_id", "ORION-BALANCED"))}
@@ -465,6 +534,7 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
         )
 
     evaluated_now = 0
+    predictions_voided = 0
     predictions_saved = 0
     prospective: dict[str, Any] = {
         "count": 0,
@@ -515,6 +585,15 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
         if state_error:
             save_errors.append(state_error)
 
+        predictions_voided, void_error = _void_obsolete_current_predictions(
+            archive,
+            archive_signature,
+            champion,
+            challenger,
+        )
+        if void_error:
+            save_errors.append(void_error)
+
         predictions_saved, prediction_error = _save_current_predictions(
             archive,
             archive_signature,
@@ -550,6 +629,7 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
         "persistence_ok": persistence_ok,
         "persistence_error": persistence_error,
         "evaluated_predictions_now": evaluated_now,
+        "predictions_voided_now": predictions_voided,
         "predictions_saved_now": predictions_saved,
         "prospective": prospective,
     }

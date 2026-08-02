@@ -410,9 +410,6 @@ def delete_recommendation(recommendation_id: int) -> dict[str, int]:
 
 
 @st.cache_resource(show_spinner=False)
-
-
-@st.cache_resource(show_spinner=False)
 def ensure_forge_v2_tables() -> None:
     """Crea la memoria persistente di FORGE 2 senza alterare il registro legacy."""
     statements = [
@@ -443,7 +440,7 @@ def ensure_forge_v2_tables() -> None:
             mode text not null default 'shadow',
             champion_model jsonb not null default '{}'::jsonb,
             challenger_model jsonb null,
-            prospective_minimum integer not null default 30,
+            prospective_minimum integer not null default 100,
             note text null,
             updated_at timestamptz not null default now()
         )
@@ -485,6 +482,90 @@ def ensure_forge_v2_tables() -> None:
         create index if not exists forge_predictions_pair_idx
             on public.forge_predictions
             (archive_signature, status, role, model_id)
+        """,
+        """
+        create unique index if not exists forge_predictions_one_pending_role_idx
+            on public.forge_predictions
+            (forge_version, source_year, source_contest, role)
+            where status = 'pending'
+        """,
+        """
+        update public.forge_state
+        set prospective_minimum = 100,
+            updated_at = now()
+        where prospective_minimum < 100
+        """,
+        """
+        alter table public.forge_state
+        alter column prospective_minimum set default 100
+        """,
+        """
+        create or replace function public.invalidate_forge_predictions_on_draw_change()
+        returns trigger
+        language plpgsql
+        security definer
+        set search_path = public
+        as $$
+        declare
+            cutoff_date date;
+            previous_max date;
+        begin
+            if tg_op = 'INSERT' then
+                select max(data_estrazione)
+                into previous_max
+                from public.estrazioni
+                where id <> new.id;
+
+                if previous_max is null or new.data_estrazione > previous_max then
+                    return new;
+                end if;
+                cutoff_date := new.data_estrazione;
+            elsif tg_op = 'UPDATE' then
+                if row(
+                    old.data_estrazione, old.concorso,
+                    old.n1, old.n2, old.n3, old.n4, old.n5, old.n6,
+                    old.jolly, old.superstar
+                ) is not distinct from row(
+                    new.data_estrazione, new.concorso,
+                    new.n1, new.n2, new.n3, new.n4, new.n5, new.n6,
+                    new.jolly, new.superstar
+                ) then
+                    return new;
+                end if;
+                cutoff_date := least(old.data_estrazione, new.data_estrazione);
+            else
+                cutoff_date := old.data_estrazione;
+            end if;
+
+            update public.forge_predictions
+            set status = 'void',
+                target_year = null,
+                target_contest = null,
+                target_date = null,
+                hits = null,
+                evaluated_at = null
+            where status in ('pending', 'evaluated')
+              and (
+                    source_date >= cutoff_date
+                    or target_date >= cutoff_date
+              );
+
+            if tg_op = 'DELETE' then
+                return old;
+            end if;
+            return new;
+        end;
+        $$
+        """,
+        """
+        drop trigger if exists trg_invalidate_forge_predictions
+        on public.estrazioni
+        """,
+        """
+        create trigger trg_invalidate_forge_predictions
+        after insert or update or delete on public.estrazioni
+        for each row
+        execute function public.invalidate_forge_predictions_on_draw_change()
         """,
     ]
     with get_connection() as connection:
@@ -601,7 +682,7 @@ def save_forge_state(record: Mapping[str, object]) -> dict[str, object]:
             if challenger is None
             else json.dumps(challenger, ensure_ascii=False, default=str)
         ),
-        "prospective_minimum": int(record.get("prospective_minimum", 30)),
+        "prospective_minimum": int(record.get("prospective_minimum", 100)),
         "note": record.get("note"),
     }
     with get_connection() as connection:
@@ -629,7 +710,28 @@ def save_forge_prediction(record: Mapping[str, object]) -> dict[str, object]:
             %(role)s, %(model_id)s, %(model_config)s::jsonb,
             %(n1)s, %(n2)s, %(n3)s, %(n4)s, %(n5)s, %(n6)s
         )
-        on conflict (prediction_key) do nothing
+        on conflict (prediction_key) do update set
+            archive_signature = excluded.archive_signature,
+            forge_version = excluded.forge_version,
+            source_year = excluded.source_year,
+            source_contest = excluded.source_contest,
+            source_date = excluded.source_date,
+            role = excluded.role,
+            model_id = excluded.model_id,
+            model_config = excluded.model_config,
+            n1 = excluded.n1,
+            n2 = excluded.n2,
+            n3 = excluded.n3,
+            n4 = excluded.n4,
+            n5 = excluded.n5,
+            n6 = excluded.n6,
+            status = 'pending',
+            target_year = null,
+            target_contest = null,
+            target_date = null,
+            hits = null,
+            evaluated_at = null
+        where public.forge_predictions.status = 'void'
         returning prediction_key
     """
     payload: dict[str, object] = {
@@ -659,7 +761,9 @@ def save_forge_prediction(record: Mapping[str, object]) -> dict[str, object]:
     }
 
 
-def fetch_pending_forge_predictions() -> list[dict[str, object]]:
+def fetch_pending_forge_predictions(
+    forge_version: str,
+) -> list[dict[str, object]]:
     ensure_forge_v2_tables()
     with get_connection() as connection:
         with connection.cursor() as cursor:
@@ -668,13 +772,54 @@ def fetch_pending_forge_predictions() -> list[dict[str, object]]:
                 select prediction_key, archive_signature, forge_version,
                        source_year, source_contest, source_date,
                        role, model_id, model_config,
-                       n1, n2, n3, n4, n5, n6, status
+                       n1, n2, n3, n4, n5, n6, status, created_at
                 from public.forge_predictions
-                where status = 'pending'
+                where status = 'pending' and forge_version = %s
                 order by source_date, created_at
-                """
+                """,
+                (str(forge_version),),
             )
             rows = cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+def void_obsolete_pending_forge_predictions(
+    *,
+    forge_version: str,
+    source_year: int,
+    source_contest: int,
+    keep_prediction_keys: list[str] | tuple[str, ...],
+) -> list[dict[str, object]]:
+    """Mette a void i pending che non appartengono alla coppia corrente."""
+    ensure_forge_v2_tables()
+    query = """
+        update public.forge_predictions
+        set status = 'void',
+            target_year = null,
+            target_contest = null,
+            target_date = null,
+            hits = null,
+            evaluated_at = null
+        where status = 'pending'
+          and forge_version = %s
+          and source_year = %s
+          and source_contest = %s
+          and not (prediction_key = any(%s))
+        returning prediction_key, archive_signature, role, model_id
+    """
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                query,
+                (
+                    str(forge_version),
+                    int(source_year),
+                    int(source_contest),
+                    [str(key) for key in keep_prediction_keys],
+                ),
+            )
+            rows = cursor.fetchall()
+        connection.commit()
     return [dict(row) for row in rows]
 
 
@@ -715,20 +860,24 @@ def evaluate_forge_prediction(
     return {"prediction_key": str(saved["prediction_key"])} if saved else {}
 
 
-def fetch_evaluated_forge_predictions() -> list[dict[str, object]]:
+def fetch_evaluated_forge_predictions(
+    forge_version: str,
+) -> list[dict[str, object]]:
     ensure_forge_v2_tables()
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                select prediction_key, archive_signature, role, model_id,
+                select prediction_key, archive_signature, forge_version,
+                       role, model_id,
                        source_year, source_contest, source_date,
                        target_year, target_contest, target_date, hits,
                        model_config, evaluated_at
                 from public.forge_predictions
-                where status = 'evaluated'
+                where status = 'evaluated' and forge_version = %s
                 order by source_date, role
-                """
+                """,
+                (str(forge_version),),
             )
             rows = cursor.fetchall()
     return [dict(row) for row in rows]

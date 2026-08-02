@@ -10,7 +10,7 @@ from core.metrics import DEFAULT_WEIGHTS, MetricWeights
 from core.orion import DEFAULT_POLICY
 
 FORGE_VERSION = "2.0.0"
-PROSPECTIVE_MINIMUM = 30
+PROSPECTIVE_MINIMUM = 100
 
 
 @dataclass(frozen=True)

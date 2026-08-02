@@ -1,49 +1,24 @@
 # ORION — SuperEnalotto Quant Engine
 
-Versione **2.7.4.4**.
+Versione **2.7.5**.
 
 ORION è un motore statistico multi-memoria con interfaccia Streamlit. FORGE 2 lavora dietro le quinte in modalità **champion/challenger**: il profilo bilanciato resta attivo, mentre un challenger viene osservato senza influenzare le schedine live finché non supera una verifica prospettica su estrazioni future.
 
-## Cosa cambia nella 2.7.4.4
+## Cosa cambia nella 2.7.5
 
-- Il Jolly deve essere diverso da tutti i sei numeri principali; il SuperStar resta indipendente.
-- Una nuova estrazione deve avere data strettamente successiva all'ultima presente.
-- La data corretta di un concorso deve restare tra le date dei concorsi immediatamente precedente e successivo.
-- Le stesse regole vengono applicate all'archivio caricato, agli import completi e agli upsert diretti verso Supabase.
-- Gli archivi con date fuori sequenza o Jolly duplicato vengono rifiutati con un messaggio esplicito.
-- Nessuna modifica all'algoritmo ORION (`2.7.4`), ai modelli FORGE o alle soglie prospettiche.
+- Rimosso il caching Streamlit dal ciclo FORGE che legge e scrive Supabase: valutazioni, invalidazioni e salvataggi vengono eseguiti a ogni ciclo reale dell'app.
+- Le previsioni pendenti vengono filtrate per versione FORGE.
+- È ammessa una sola previsione pendente per versione, concorso sorgente e ruolo.
+- Snapshot alternativi dello stesso concorso vengono messi automaticamente a `void`; una firma già esistente può essere riattivata in sicurezza dopo il ripristino dell'archivio.
+- Modifiche, cancellazioni o inserimenti retroattivi nell'archivio invalidano automaticamente le previsioni FORGE influenzate, anche se eseguiti direttamente nel database.
+- La valutazione si blocca in presenza di ruoli duplicati o firme incoerenti, invece di gonfiare il campione prospettico.
+- Il contatore `previsioni_valutate_ora` aumenta soltanto quando PostgreSQL aggiorna realmente una riga pendente.
+- La soglia minima prospettica passa da 30 a **100 confronti appaiati**; il valore persistito viene rialzato automaticamente.
+- Nessuna modifica allo scoring ORION, che resta versione algoritmica `2.7.4`.
 
-## Correzione precedente 2.7.4.3
+## Correzioni precedenti
 
-- Ripristinata in **Archivio** la gestione permanente delle estrazioni.
-- Aggiunti inserimento del prossimo concorso, correzione dei dati e cancellazione protetta dell'ultima estrazione.
-- Ogni scrittura svuota le cache e ricalcola automaticamente ORION e FORGE sul nuovo archivio Supabase.
-- La cancellazione dell'ultima estrazione è protetta sia nell'interfaccia sia nel livello database.
-- Nessuna modifica all'algoritmo ORION (`2.7.4`).
-
-## Correzione precedente 2.7.4.2
-
-- Separata la versione visibile dell'app dalla versione dell'algoritmo ORION.
-- Le patch applicative non generano più nuovi ID per gli stessi cinque modelli FORGE.
-- I contatori mostrano soltanto i candidati della configurazione corrente, ignorando le righe storiche ridondanti già presenti in Supabase.
-- Champion e challenger salvati vengono accettati soltanto se compatibili con i modelli correnti; eventuali riferimenti obsoleti vengono sostituiti senza cancellare lo storico.
-- Nessuna migrazione SQL e nessuna cancellazione manuale delle tabelle.
-
-## Correzione precedente 2.7.4.1
-
-- Corretto `previsioni_salvate_ora`: conta soltanto le righe realmente inserite in Supabase e resta a zero dopo un reboot senza nuove previsioni.
-
-- Il live e i backtest usano la stessa funzione pura `generate_orion_proposal`.
-- Eliminato il proxy FORGE che testava un algoritmo diverso da quello realmente usato.
-- Eliminata la moltiplicazione artificiale dei candidati per finestre ignorate: i challenger sono 5 configurazioni realmente distinte.
-- Selezione retrospettiva su blocco di sviluppo e verifica su holdout successivo.
-- Il backtest può autorizzare soltanto lo stato `shadow`; non può promuovere un modello.
-- La promozione richiede almeno 30 confronti prospettici champion/challenger, salvati prima dell'estrazione.
-- Esperimenti, stato operativo e previsioni sono persistenti su Supabase.
-- Se Supabase non salva, FORGE lo dichiara e mantiene il champion bilanciato protetto.
-- La firma dei backtest usa soltanto data, concorso e sei numeri principali: Jolly e SuperStar non causano ricalcoli inutili.
-- Le proposte in sessione vengono invalidate quando cambia archivio o modello.
-- Rimossi dall'app i vecchi pannelli manuali di statistiche e backtest non raggiungibili dal menu.
+La serie 2.7.4.1–2.7.4.4 ha corretto il contatore delle previsioni, separato la versione applicativa da quella algoritmica, ripristinato la gestione delle estrazioni e rafforzato i controlli su Jolly, numeri e ordine cronologico.
 
 ## Menu utente
 

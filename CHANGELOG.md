@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.7.5 — Consolidamento FORGE e integrità prospettica
+
+- Eliminata la cache di un'ora dal ciclo FORGE con effetti collaterali su Supabase.
+- Le query delle previsioni `pending` ed `evaluated` sono filtrate per `forge_version`.
+- Aggiunto indice univoco parziale: un solo record pendente per versione, concorso sorgente e ruolo.
+- Aggiunta invalidazione automatica a `void` degli snapshot alternativi dello stesso concorso.
+- Le righe `void` della stessa chiave possono essere riattivate senza creare duplicati quando l'archivio viene ripristinato.
+- Aggiunto trigger PostgreSQL che invalida previsioni influenzate da correzioni, cancellazioni o inserimenti retroattivi delle estrazioni.
+- La valutazione si arresta in caso di ruoli duplicati o firme champion/challenger incoerenti.
+- Il contatore delle valutazioni aumenta soltanto per aggiornamenti realmente eseguiti.
+- Soglia prospettica minima elevata da 30 a 100 confronti appaiati.
+- Aggiunto il contatore tecnico `previsioni_annullate_ora`.
+- Versione visibile `2.7.5`; algoritmo ORION invariato a `2.7.4`.
+- Suite: 48 test superati.
+
+
 ## 2.7.4.4 — Integrità estrazioni rafforzata
 
 - Il Jolly viene rifiutato se coincide con uno dei sei numeri principali.

@@ -40,14 +40,13 @@ from ui.orion_ui import (
     render_number_balls,
 )
 
-APP_TITLE = "ORION v2.7.4.4 — SuperEnalotto Quant Engine"
+APP_TITLE = "ORION v2.7.5 — SuperEnalotto Quant Engine"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🌌", layout="wide")
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def build_forge_snapshot_cached(
+def build_forge_snapshot_runtime(
     raw_records: tuple[tuple[Any, ...], ...],
 ) -> dict[str, Any]:
     dataframe = pd.DataFrame(
@@ -761,7 +760,7 @@ def render_archive_tab(archive: pd.DataFrame, database_available: bool) -> None:
                         (validated_archive["anno"] == draw_date.year)
                         & (validated_archive["concorso"] == contest)
                     ].iloc[0]
-                    upsert_draw(new_row.to_dict(), source="inserimento_app_v2_7_4_4")
+                    upsert_draw(new_row.to_dict(), source="inserimento_app_v2_7_5")
                 except Exception as exc:
                     st.error(str(exc))
                 else:
@@ -862,7 +861,7 @@ def render_archive_tab(archive: pd.DataFrame, database_available: bool) -> None:
                         & (corrected_archive["concorso"] == selected_contest)
                     ].iloc[0]
                     upsert_draw(
-                        corrected_row.to_dict(), source="correzione_app_v2_7_4_4"
+                        corrected_row.to_dict(), source="correzione_app_v2_7_5"
                     )
                 except Exception as exc:
                     st.error(str(exc))
@@ -898,7 +897,7 @@ def render_archive_tab(archive: pd.DataFrame, database_available: bool) -> None:
                         delete_draw(
                             latest_year,
                             latest_contest,
-                            source="eliminazione_app_v2_7_4_4",
+                            source="eliminazione_app_v2_7_5",
                         )
                     except Exception as exc:
                         st.error(str(exc))
@@ -1012,6 +1011,7 @@ def render_settings_view(
                 "respinti": forge.get("rejected_count"),
                 "falliti": forge.get("failed_count"),
                 "previsioni_valutate_ora": forge.get("evaluated_predictions_now"),
+                "previsioni_annullate_ora": forge.get("predictions_voided_now"),
                 "previsioni_salvate_ora": forge.get("predictions_saved_now"),
                 "valutazione_prospettica": forge.get("prospective"),
                 "esperimenti_saltati_perche_gia_noti": forge.get("skipped_known"),
@@ -1032,7 +1032,7 @@ def main() -> None:
     initialize_state()
     archive = repository_archive
     with st.spinner("FORGE verifica i modelli disponibili..."):
-        forge = build_forge_snapshot_cached(records_tuple(archive))
+        forge = build_forge_snapshot_runtime(records_tuple(archive))
     orion = build_orion_snapshot(archive, forge)
     invalidate_generated_state(
         f"{forge.get('archive_signature')}:{orion.get('signature')}:{orion.get('model_id')}"
