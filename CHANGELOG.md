@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.7.4.2 — Versionamento algoritmico e contatori correnti
+
+- Separata la versione dell'app (`2.7.4.2`) dalla versione algoritmica ORION (`2.7.4`).
+- Gli ID dei cinque modelli e le chiavi degli esperimenti non cambiano più per una patch puramente applicativa.
+- I riepiloghi `shadow`, `non_validati`, `respinti` e `falliti` contano soltanto le cinque chiavi attese dal ciclo corrente.
+- I record storici ridondanti restano disponibili in Supabase ma non influenzano più selezione e contatori.
+- Champion e challenger persistiti vengono riallineati ai modelli correnti; riferimenti obsoleti sono ignorati in sicurezza.
+- Nessuna modifica a scoring, backtest, soglia prospettica o grafica.
+
 ## 2.7.4.1 — Contatore previsioni persistenti
 
 - `save_forge_prediction` comunica ora se `ON CONFLICT DO NOTHING` ha inserito realmente una riga.

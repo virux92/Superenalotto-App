@@ -25,7 +25,12 @@ class OrionPolicy:
     esperimenti FORGE.
     """
 
-    version: str = "2.7.4.1"
+    # Versione mostrata nell'interfaccia. Può cambiare per patch applicative
+    # senza invalidare i modelli e gli esperimenti FORGE già persistiti.
+    version: str = "2.7.4.2"
+    # Versione dell'algoritmo vero e proprio. Va modificata soltanto quando
+    # cambiano scoring, memorie, pool, limiti o filtri della pipeline ORION.
+    algorithm_version: str = "2.7.4"
     memories: tuple[OrionMemory, ...] = (
         OrionMemory("Breve", 25, 0.10),
         OrionMemory("Operativa", 50, 0.20),

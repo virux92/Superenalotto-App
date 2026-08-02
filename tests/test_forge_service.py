@@ -115,3 +115,62 @@ def test_supabase_registry_survives_local_cache_loss(monkeypatch, tmp_path: Path
         [value for value in fake_database.predictions.values() if value["status"] == "pending"]
     )
     assert third["prospective"]["count"] == 1
+
+
+def test_historical_duplicate_records_do_not_pollute_current_counts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    fake_database = _fake_database_module()
+    monkeypatch.setitem(sys.modules, "database", fake_database)
+    registry = tmp_path / ".forge_registry_v2.json"
+    monkeypatch.setattr(forge_service, "REGISTRY_FILE", registry)
+
+    archive = synthetic_archive(90)
+    first = forge_service.build_forge_snapshot(archive)
+    assert first["candidate_count"] == 5
+    assert (
+        first["shadow_count"]
+        + first["non_validated_count"]
+        + first["rejected_count"]
+        + first["failed_count"]
+        == 5
+    )
+
+    # Simula i cinque record ridondanti creati da una vecchia patch che aveva
+    # incluso la versione visibile dell'app nella configurazione del modello.
+    for index in range(5):
+        key = f"stale-{index}"
+        fake_database.experiments[key] = {
+            "experiment_key": key,
+            "archive_signature": first["archive_signature"],
+            "forge_version": first["version"],
+            "model_id": f"ORION-STALE-{index}",
+            "label": f"Storico {index}",
+            "status": "shadow" if index == 0 else "non_validated",
+            "quality": 999.0 if index == 0 else 0.0,
+            "configuration": {},
+            "metrics": {},
+            "checks": {},
+            "reason": None,
+        }
+
+    fake_database.state["challenger_model"] = {
+        "model_id": "ORION-STALE-0",
+        "status": "shadow",
+        "configuration": {},
+    }
+
+    second = forge_service.build_forge_snapshot(archive)
+    assert second["candidate_count"] == 5
+    assert (
+        second["shadow_count"]
+        + second["non_validated_count"]
+        + second["rejected_count"]
+        + second["failed_count"]
+        == 5
+    )
+    assert second["challenger_model"] is None or not str(
+        second["challenger_model"]["model_id"]
+    ).startswith("ORION-STALE")
+    assert second["executed_now"] == 0
+    assert second["skipped_known"] == 5

@@ -79,3 +79,28 @@ def test_default_champion_weights_are_normalized() -> None:
     weights = weights_from_record(champion)
     assert champion["model_id"] == "ORION-BALANCED"
     assert round(weights.frequency + weights.delay + weights.recency, 8) == 1.0
+
+
+def test_patch_version_does_not_change_forge_model_ids(monkeypatch) -> None:
+    import core.forge as forge_module
+    from core.orion import OrionPolicy
+
+    first_policy = OrionPolicy(version="2.7.4.2", algorithm_version="2.7.4")
+    second_policy = OrionPolicy(version="2.7.4.99", algorithm_version="2.7.4")
+
+    monkeypatch.setattr(forge_module, "DEFAULT_POLICY", first_policy)
+    first_ids = tuple(model.model_id for model in forge_module.build_candidate_models(100))
+    first_keys = tuple(
+        forge_module.experiment_key(model, "same-archive")
+        for model in forge_module.build_candidate_models(100)
+    )
+
+    monkeypatch.setattr(forge_module, "DEFAULT_POLICY", second_policy)
+    second_ids = tuple(model.model_id for model in forge_module.build_candidate_models(100))
+    second_keys = tuple(
+        forge_module.experiment_key(model, "same-archive")
+        for model in forge_module.build_candidate_models(100)
+    )
+
+    assert first_ids == second_ids
+    assert first_keys == second_keys

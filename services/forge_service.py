@@ -290,16 +290,17 @@ def _save_current_predictions(
     return saved, None
 
 
-def _records_for_current_archive(
+def _records_for_current_candidates(
     known: Mapping[str, Mapping[str, Any]],
-    archive_signature: str,
+    expected_keys: set[str],
 ) -> list[dict[str, Any]]:
-    return [
-        dict(record)
-        for record in known.values()
-        if record.get("archive_signature") == archive_signature
-        and record.get("forge_version") == FORGE_VERSION
-    ]
+    """Restituisce soltanto i cinque esperimenti della configurazione corrente.
+
+    Le righe storiche prodotte da patch applicative precedenti restano in
+    Supabase per audit, ma non devono alterare contatori, selezione challenger
+    o stato operativo del ciclo attuale.
+    """
+    return [dict(known[key]) for key in sorted(expected_keys) if key in known]
 
 
 def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
@@ -415,20 +416,42 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
                 else:
                     database_records[key] = dict(record)
 
-    current_records = _records_for_current_archive(known, archive_signature)
+    current_records = _records_for_current_candidates(known, expected_keys)
     default_champion = default_champion_record()
     champion = default_champion
     challenger: dict[str, Any] | None = None
     mode = "shadow"
     prospective_minimum = PROSPECTIVE_MINIMUM
 
+    current_by_model_id = {
+        str(record.get("model_id")): dict(record)
+        for record in current_records
+        if record.get("model_id")
+    }
+
     if persistence_ok and database_state:
         champion_payload = database_state.get("champion_model")
         if isinstance(champion_payload, dict) and champion_payload.get("model_id"):
-            champion = dict(champion_payload)
+            champion_id = str(champion_payload["model_id"])
+            if champion_id == "ORION-BALANCED":
+                # Ricostruisce il champion protetto con la configurazione
+                # algoritmica corrente, ignorando metadati applicativi obsoleti.
+                champion = default_champion
+            elif champion_id in current_by_model_id:
+                champion = dict(current_by_model_id[champion_id])
+                champion["status"] = "promoted"
+
         challenger_payload = database_state.get("challenger_model")
         if isinstance(challenger_payload, dict) and challenger_payload.get("model_id"):
-            challenger = dict(challenger_payload)
+            challenger_id = str(challenger_payload["model_id"])
+            current_challenger = current_by_model_id.get(challenger_id)
+            if (
+                current_challenger is not None
+                and current_challenger.get("status") == "shadow"
+                and challenger_id != str(champion.get("model_id"))
+            ):
+                challenger = dict(current_challenger)
+
         mode = str(database_state.get("mode", "shadow"))
         prospective_minimum = int(
             database_state.get("prospective_minimum", PROSPECTIVE_MINIMUM)

@@ -38,7 +38,7 @@ class ForgeModel:
             "frequency_weight": round(normalized.frequency, 6),
             "delay_weight": round(normalized.delay, 6),
             "recency_weight": round(normalized.recency, 6),
-            "orion_policy_version": DEFAULT_POLICY.version,
+            "orion_policy_version": DEFAULT_POLICY.algorithm_version,
             "candidate_pool": DEFAULT_POLICY.candidate_pool,
             "candidate_limit": DEFAULT_POLICY.candidate_limit,
             "memories": [
@@ -75,7 +75,7 @@ def default_champion_record() -> dict[str, Any]:
             "frequency_weight": normalized.frequency,
             "delay_weight": normalized.delay,
             "recency_weight": normalized.recency,
-            "orion_policy_version": DEFAULT_POLICY.version,
+            "orion_policy_version": DEFAULT_POLICY.algorithm_version,
             "candidate_pool": DEFAULT_POLICY.candidate_pool,
             "candidate_limit": DEFAULT_POLICY.candidate_limit,
         },
