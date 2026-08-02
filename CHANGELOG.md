@@ -1,3 +1,20 @@
+# Changelog
+
+## 2.7.4 — Pipeline unica e FORGE shadow persistente
+
+- Unificata la generazione live e di backtest in `generate_orion_proposal`.
+- FORGE 2 valuta 5 challenger realmente distinti con sviluppo + holdout.
+- Disattivata la promozione retrospettiva automatica: il backtest autorizza solo lo shadow.
+- Aggiunto confronto prospettico champion/challenger con minimo 30 osservazioni appaiate.
+- Aggiunte le tabelle automatiche `forge_experiments_v2`, `forge_state` e `forge_predictions`.
+- Supabase è la memoria autorevole; il registro locale è solo cache esplicitamente non persistente.
+- Aggiunta diagnostica visibile degli errori di persistenza.
+- Separata la firma dei sei numeri da Jolly e SuperStar.
+- Aggiunta invalidazione delle proposte di sessione al cambio di archivio/modello.
+- Rimossi i pannelli manuali morti di statistiche e backtest dall'app.
+- Allineate tutte le versioni a 2.7.4 e rimossa la dipendenza inutilizzata `openpyxl`.
+- Suite: 32 test, inclusi pipeline live/backtest e persistenza simulata attraverso reboot.
+
 ## 2.7.3 — Ripristino sistemi utente
 
 - Ripristinata la creazione dei sistemi nella pagina Genera.

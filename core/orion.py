@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import math
 from dataclasses import asdict, dataclass
 from statistics import mean, pstdev
 from typing import Any
 
-from core.combinations import combination_features
+from core.combinations import combination_features, rank_candidate_sestine
 from core.metrics import DEFAULT_WEIGHTS, MetricWeights, calculate_metrics, min_max_scale
 
 
@@ -18,7 +17,15 @@ class OrionMemory:
 
 @dataclass(frozen=True)
 class OrionPolicy:
-    version: str = "2.7.2"
+    """Configurazione unica del motore usata sia live sia nei backtest.
+
+    Il pool è stato ridotto da 25 a 18 numeri per rendere sostenibile il
+    walk-forward dello stesso identico pipeline senza introdurre un proxy più
+    semplice. Qualunque modifica a questa policy cambia anche la firma degli
+    esperimenti FORGE.
+    """
+
+    version: str = "2.7.4"
     memories: tuple[OrionMemory, ...] = (
         OrionMemory("Breve", 25, 0.10),
         OrionMemory("Operativa", 50, 0.20),
@@ -27,8 +34,8 @@ class OrionPolicy:
         OrionMemory("Storica", None, 0.15),
     )
     minimum_history: int = 50
-    candidate_pool: int = 25
-    candidate_limit: int = 300
+    candidate_pool: int = 18
+    candidate_limit: int = 200
 
 
 DEFAULT_POLICY = OrionPolicy()
@@ -76,11 +83,11 @@ def calculate_orion_state(
     policy: OrionPolicy = DEFAULT_POLICY,
     metric_weights: MetricWeights = DEFAULT_WEIGHTS,
 ) -> dict[str, Any]:
-    """Calcola il consenso multi-finestra di ORION senza parametri utente.
+    """Calcola il consenso multi-memoria di ORION.
 
     Lo storico deve essere ordinato dal concorso più recente al più vecchio.
-    Ogni memoria produce metriche indipendenti; il punteggio finale premia il
-    consenso e penalizza l'instabilità tra finestre.
+    La funzione non usa mai dati futuri ed è condivisa dal percorso live e dal
+    walk-forward di FORGE.
     """
     if len(history) < 6:
         raise ValueError("Servono almeno 6 estrazioni per inizializzare ORION.")
@@ -105,7 +112,10 @@ def calculate_orion_state(
     }
     instability_norm = min_max_scale(instability)
     consensus = {
-        number: max(0.0, weighted_scores[number] * (1.0 - 0.18 * instability_norm[number]))
+        number: max(
+            0.0,
+            weighted_scores[number] * (1.0 - 0.18 * instability_norm[number]),
+        )
         for number in range(1, 91)
     }
     consensus = min_max_scale(consensus)
@@ -115,12 +125,13 @@ def calculate_orion_state(
         for number in range(1, 91)
     }
     overall_stability = mean(agreement.values()) if agreement else 0.0
+    normalized_weights = metric_weights.normalized()
 
     return {
         "engine": "ORION",
         "version": policy.version,
         "history_size": len(history),
-        "status": "STABILE" if overall_stability >= 0.60 else "OSSERVAZIONE",
+        "status": "COERENTE" if overall_stability >= 0.60 else "OSSERVAZIONE",
         "stability": overall_stability,
         "score": consensus,
         "agreement": agreement,
@@ -130,11 +141,44 @@ def calculate_orion_state(
         "candidate_pool": policy.candidate_pool,
         "candidate_limit": policy.candidate_limit,
         "metric_weights": {
-            "frequency": metric_weights.normalized().frequency,
-            "delay": metric_weights.normalized().delay,
-            "recency": metric_weights.normalized().recency,
+            "frequency": normalized_weights.frequency,
+            "delay": normalized_weights.delay,
+            "recency": normalized_weights.recency,
         },
     }
+
+
+def generate_orion_proposal(
+    history: list[dict[str, Any]],
+    *,
+    metric_weights: MetricWeights = DEFAULT_WEIGHTS,
+    policy: OrionPolicy = DEFAULT_POLICY,
+) -> dict[str, Any]:
+    """Genera la proposta ORION con l'unico pipeline ammesso.
+
+    Questa funzione pura viene chiamata sia dall'app sia da FORGE. In questo
+    modo il modello sottoposto a backtest è esattamente quello usato dal vivo.
+    """
+    state = calculate_orion_state(history, policy, metric_weights)
+    structural = state["structural"]
+    candidates = rank_candidate_sestine(
+        state["score"],
+        state["candidate_pool"],
+        state["candidate_limit"],
+        structural["minimum_sum"],
+        structural["maximum_sum"],
+        structural["maximum_low_numbers"],
+        structural["minimum_decades"],
+    )
+    if not candidates:
+        fallback = tuple(
+            sorted(sorted(state["score"], key=state["score"].get, reverse=True)[:6])
+        )
+        candidates = [(sum(state["score"][number] for number in fallback), fallback)]
+
+    state["candidates"] = candidates
+    state["primary"] = candidates[0][1]
+    return state
 
 
 def orion_signature(state: dict[str, Any]) -> str:

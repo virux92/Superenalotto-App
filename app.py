@@ -6,26 +6,21 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from core.analytics import archive_analytics
-from core.backtest import records_tuple, run_walk_forward_backtest as engine_backtest
+from core.backtest import records_tuple
 from core.combinations import (
-    combination_features,
     euro,
     generate_base_variant_system,
     generate_integral_system,
     generate_reduced_system,
-    rank_candidate_sestine,
     system_cost,
 )
-from core.metrics import calculate_metrics, calculate_superstar_ranking
 from database import (
     delete_recommendation,
     fetch_draws,
     fetch_recommendations,
     save_recommendation,
 )
-from services.archive_service import archive_snapshot, load_primary_archive
-from services.draw_service import dataframe_to_history
+from services.archive_service import load_primary_archive
 from services.recommendation_service import (
     build_monitoring_tables,
     suggest_next_target,
@@ -41,71 +36,10 @@ from ui.orion_ui import (
     render_number_balls,
 )
 
-APP_TITLE = "ORION v2.7.3 — SuperEnalotto Quant Engine"
+APP_TITLE = "ORION v2.7.4 — SuperEnalotto Quant Engine"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🌌", layout="wide")
-
-
-@st.cache_data(show_spinner=False)
-def rank_candidate_sestine_cached(
-    score_items: tuple[tuple[int, float], ...],
-    top_pool_size: int,
-    limit: int,
-    minimum_sum: int,
-    maximum_sum: int,
-    maximum_low_numbers: int,
-    minimum_decades: int,
-) -> list[tuple[float, tuple[int, ...]]]:
-    return rank_candidate_sestine(
-        dict(score_items),
-        top_pool_size,
-        limit,
-        minimum_sum,
-        maximum_sum,
-        maximum_low_numbers,
-        minimum_decades,
-    )
-
-
-@st.cache_data(show_spinner=False)
-def run_walk_forward_backtest_cached(
-    raw_records: tuple[tuple[Any, ...], ...],
-    window_size: int,
-    test_limit: int,
-    pool_size: int,
-    minimum_sum: int,
-    maximum_sum: int,
-    maximum_low_numbers: int,
-    minimum_decades: int,
-    random_seed: int,
-) -> dict[str, Any]:
-    return engine_backtest(
-        raw_records,
-        window_size,
-        test_limit,
-        pool_size,
-        minimum_sum,
-        maximum_sum,
-        maximum_low_numbers,
-        minimum_decades,
-        random_seed,
-    )
-
-
-@st.cache_data(show_spinner=False)
-def archive_analytics_cached(
-    raw_records: tuple[tuple[Any, ...], ...], association_limit: int
-) -> dict[str, Any]:
-    dataframe = pd.DataFrame(
-        raw_records,
-        columns=[
-            "data", "anno", "concorso", "n1", "n2", "n3", "n4", "n5", "n6", "jolly", "superstar"
-        ],
-    )
-    dataframe["data"] = pd.to_datetime(dataframe["data"])
-    dataframe["jolly"] = pd.to_numeric(dataframe["jolly"]).mask(lambda values: values.eq(0)).astype("Int64")
-    return archive_analytics(dataframe_to_history(dataframe), association_limit)
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -134,8 +68,17 @@ def initialize_state() -> None:
         st.session_state.orion_candidate_index = 0
     if "system_result" not in st.session_state:
         st.session_state.system_result = None
-    if "backtest_result" not in st.session_state:
-        st.session_state.backtest_result = None
+
+
+def invalidate_generated_state(signature: str) -> None:
+    """Evita di mostrare proposte create con un archivio o modello precedente."""
+    previous = st.session_state.get("orion_runtime_signature")
+    if previous == signature:
+        return
+    st.session_state.single_result = None
+    st.session_state.orion_candidate_index = 0
+    st.session_state.system_result = None
+    st.session_state.orion_runtime_signature = signature
 
 
 def render_sidebar(
@@ -461,7 +404,7 @@ def render_systems_tab(
     st.download_button(
         "Scarica sistema CSV",
         system_dataframe.to_csv(index=False).encode("utf-8-sig"),
-        "sistema_orion_v2_7_3.csv",
+        "sistema_orion_v2_7_4.csv",
         "text/csv",
         use_container_width=True,
     )
@@ -483,206 +426,8 @@ def render_generate_view(
     with system_tab:
         render_systems_tab(orion["score"], orion["superstar_ranking"])
 
-def render_statistics_tab(
-    active_dataframe: pd.DataFrame,
-    metrics: dict[str, dict[int, float]],
-    scores: dict[int, float],
-    superstar_ranking: list[tuple[int, float, int, int]],
-) -> None:
-    ranking_tab, structure_tab, association_tab, stability_tab = st.tabs(
-        ["Ranking numeri", "Struttura estrazioni", "Coppie e terzine", "Stabilità annuale"]
-    )
-
-    analytics = archive_analytics_cached(records_tuple(active_dataframe), 100)
-
-    with ranking_tab:
-        stats_dataframe = pd.DataFrame(
-            {
-                "Numero": range(1, 91),
-                "Frequenza": [
-                    int(metrics["frequency"][number]) for number in range(1, 91)
-                ],
-                "Ritardo": [
-                    int(metrics["delay"][number]) for number in range(1, 91)
-                ],
-                "Recenza": [
-                    round(metrics["recency"][number], 4) for number in range(1, 91)
-                ],
-                "Score": [round(scores[number], 4) for number in range(1, 91)],
-            }
-        ).sort_values(["Score", "Numero"], ascending=[False, True])
-        st.dataframe(stats_dataframe, use_container_width=True, hide_index=True, height=520)
-
-        st.subheader("Ranking SuperStar")
-        superstar_dataframe = pd.DataFrame(
-            [
-                {
-                    "Numero": number,
-                    "Score": round(score, 4),
-                    "Frequenza": frequency,
-                    "Ritardo": delay,
-                }
-                for number, score, frequency, delay in superstar_ranking[:20]
-            ]
-        )
-        st.dataframe(superstar_dataframe, use_container_width=True, hide_index=True)
-
-    with structure_tab:
-        st.caption(
-            "Analisi descrittiva della finestra attiva. Gli scostamenti storici "
-            "non costituiscono una previsione delle estrazioni future."
-        )
-        summary_dataframe = pd.DataFrame(analytics["structure_summary"])
-        st.dataframe(summary_dataframe, use_container_width=True, hide_index=True)
-
-        decade_dataframe = pd.DataFrame(analytics["decades"])
-        st.subheader("Distribuzione per decine")
-        st.bar_chart(decade_dataframe.set_index("Decina")["Presenze"])
-        st.dataframe(decade_dataframe, use_container_width=True, hide_index=True)
-
-        st.subheader("Ripetizioni rispetto all'estrazione precedente")
-        overlap_dataframe = pd.DataFrame(analytics["overlaps"])
-        st.dataframe(overlap_dataframe, use_container_width=True, hide_index=True)
-
-        with st.expander("Dettaglio strutturale delle estrazioni"):
-            structure_dataframe = pd.DataFrame(analytics["structure_rows"])
-            structure_dataframe["Entropia decine"] = structure_dataframe[
-                "Entropia decine"
-            ].round(4)
-            st.dataframe(
-                structure_dataframe.sort_values(["Anno", "Concorso"], ascending=False),
-                use_container_width=True,
-                hide_index=True,
-                height=520,
-            )
-
-    with association_tab:
-        association_limit = st.slider("Associazioni da mostrare", 10, 100, 30, 10)
-        st.caption(
-            "Le coppie e le terzine sono ordinate per presenze nella finestra. "
-            "L'atteso casuale si riferisce a una specifica associazione fissata in anticipo; "
-            "la selezione delle più frequenti è retrospettiva."
-        )
-        pairs = pd.DataFrame(analytics["pairs"]).head(association_limit)
-        triplets = pd.DataFrame(analytics["triplets"]).head(association_limit)
-        pair_column, triplet_column = st.columns(2)
-        with pair_column:
-            st.subheader("Coppie più presenti")
-            st.dataframe(pairs, use_container_width=True, hide_index=True, height=520)
-        with triplet_column:
-            st.subheader("Terzine più presenti")
-            st.dataframe(triplets, use_container_width=True, hide_index=True, height=520)
-
-    with stability_tab:
-        stability_dataframe = pd.DataFrame(analytics["annual_stability"])
-        display_mode = st.radio(
-            "Ordinamento",
-            ["Più stabili", "Più variabili", "Numero"],
-            horizontal=True,
-        )
-        if display_mode == "Più stabili":
-            stability_dataframe = stability_dataframe.sort_values(
-                ["Stabilità", "Numero"], ascending=[False, True]
-            )
-        elif display_mode == "Più variabili":
-            stability_dataframe = stability_dataframe.sort_values(
-                ["CV", "Numero"], ascending=[False, True]
-            )
-        else:
-            stability_dataframe = stability_dataframe.sort_values("Numero")
-        st.caption(
-            "Il tasso annuale è la quota di estrazioni dell'anno in cui il numero è comparso. "
-            "CV basso indica maggiore uniformità storica, non maggiore probabilità futura."
-        )
-        st.dataframe(
-            stability_dataframe,
-            use_container_width=True,
-            hide_index=True,
-            height=600,
-        )
 
 
-def render_backtest_tab(archive: pd.DataFrame) -> None:
-    st.subheader("Backtest walk-forward sull'archivio")
-    st.write(
-        "Ogni estrazione viene simulata usando soltanto le estrazioni precedenti "
-        "contenute nella finestra mobile selezionata."
-    )
-
-    backtest_columns = st.columns(5)
-    backtest_window = backtest_columns[0].selectbox("Finestra", [50, 100, 200], index=1)
-    backtest_pool = backtest_columns[1].selectbox(
-        "Pool algoritmo", [15, 16, 17, 18], index=0
-    )
-    test_choice = backtest_columns[2].selectbox(
-        "Numero test", ["Ultimi 100", "Ultimi 300", "Tutti"], index=1
-    )
-    test_limit = {"Ultimi 100": 100, "Ultimi 300": 300, "Tutti": 0}[test_choice]
-    minimum_decades_backtest = backtest_columns[3].selectbox(
-        "Min decine", [3, 4], index=0
-    )
-    random_seed = backtest_columns[4].number_input(
-        "Seed casuale", min_value=0, value=20260726, step=1
-    )
-
-    st.caption(
-        "Filtri backtest: somma 190–350, massimo 4 numeri fino a 31. "
-        "Il benchmark casuale è deterministico e riproducibile tramite il seed."
-    )
-
-    if st.button("Esegui backtest", type="primary"):
-        with st.spinner("Calcolo storico in corso..."):
-            st.session_state.backtest_result = run_walk_forward_backtest_cached(
-                records_tuple(archive),
-                int(backtest_window),
-                int(test_limit),
-                int(backtest_pool),
-                190,
-                350,
-                4,
-                int(minimum_decades_backtest),
-                int(random_seed),
-            )
-
-    backtest = st.session_state.backtest_result
-    if backtest:
-        top_metrics = st.columns(3)
-        top_metrics[0].metric("Test eseguiti", backtest["test_count"])
-        top_metrics[1].metric("Seed benchmark", backtest["random_seed"])
-        top_metrics[2].metric(
-            "2+ casuali teorici attesi", f"{backtest['random_expected_2_plus']:.2f}"
-        )
-
-        summary_dataframe = pd.DataFrame(backtest["summary"])
-        numeric_columns = [
-            "Media punti", "Deviazione", "IC95% minimo", "IC95% massimo"
-        ]
-        summary_dataframe[numeric_columns] = summary_dataframe[numeric_columns].round(4)
-        st.dataframe(summary_dataframe, use_container_width=True, hide_index=True)
-
-        st.caption(
-            "Riferimento teorico casuale: media 0,400 punti per sestina. "
-            "L'intervallo di confidenza descrive l'incertezza della media osservata."
-        )
-
-        with st.expander("Stabilità annuale del backtest"):
-            annual_dataframe = pd.DataFrame(backtest["annual_summary"])
-            annual_dataframe["Media punti"] = annual_dataframe["Media punti"].round(4)
-            st.dataframe(annual_dataframe, use_container_width=True, hide_index=True)
-
-        detail_dataframe = pd.DataFrame(backtest["details"])
-        st.dataframe(
-            detail_dataframe.tail(300),
-            use_container_width=True,
-            hide_index=True,
-            height=520,
-        )
-        st.download_button(
-            "Scarica dettaglio backtest",
-            detail_dataframe.to_csv(index=False).encode("utf-8-sig"),
-            "backtest_superenalotto.csv",
-            "text/csv",
-        )
 
 
 def render_monitored_tickets_tab(
@@ -887,26 +632,6 @@ def render_archive_tab(archive: pd.DataFrame) -> None:
     st.dataframe(display_archive, use_container_width=True, hide_index=True, height=600)
 
 
-def render_data_and_verification_tab(
-    archive: pd.DataFrame,
-    metrics: dict[str, dict[int, float]],
-    scores: dict[int, float],
-    superstar_ranking: list[tuple[int, float, int, int]],
-) -> None:
-    st.subheader("Dati e verifica")
-    st.caption(
-        "Qui restano disponibili gli strumenti tecnici. Sono separati dalla schermata "
-        "principale perché servono a controllare il motore, non a pilotarlo a mano."
-    )
-    archive_tab, statistics_tab, backtest_tab = st.tabs(
-        ["Archivio", "Statistiche", "Backtest"]
-    )
-    with archive_tab:
-        render_archive_tab(archive)
-    with statistics_tab:
-        render_statistics_tab(archive.copy(), metrics, scores, superstar_ranking)
-    with backtest_tab:
-        render_backtest_tab(archive)
 
 
 def render_home_view(
@@ -928,7 +653,8 @@ def render_home_view(
     metric_columns[2].metric(
         "Modello attivo", str(orion.get("model_id", "ORION-BALANCED"))
     )
-    metric_columns[3].metric("Stato", "Stabile" if forge["state"] == "stable" else "Protetto")
+    state_labels = {"shadow": "In osservazione", "promoted": "Promosso", "fallback": "Protetto"}
+    metric_columns[3].metric("Stato", state_labels.get(str(forge.get("state")), "Non validato"))
 
     st.caption(
         f"Fonte dati: **{archive_source}** · archivio aggiornato al "
@@ -965,22 +691,24 @@ def render_settings_view(
         "o filtri statistici da regolare manualmente."
     )
 
-    active = forge.get("active_model")
+    active = forge.get("active_model") or {}
+    challenger = forge.get("challenger_model") or {}
+    state_labels = {"shadow": "Shadow", "promoted": "Promosso", "fallback": "Fallback"}
     columns = st.columns(4)
     columns[0].metric("Fonte dati", archive_source)
-    columns[1].metric("FORGE", "Attivo")
-    columns[2].metric("Candidati validi", int(forge.get("valid_count", 0)))
-    columns[3].metric(
-        "Modello", str(active.get("model_id")) if active else "Profilo protetto"
-    )
+    columns[1].metric("FORGE", state_labels.get(str(forge.get("state")), "Non validato"))
+    columns[2].metric("Challenger in ombra", int(forge.get("shadow_count", 0)))
+    columns[3].metric("Champion", str(active.get("model_id", "ORION-BALANCED")))
 
     st.markdown("#### Automazione")
     st.markdown(
-        "- FORGE crea e confronta i modelli candidati senza intervento manuale.\n"
-        "- Gli esperimenti già respinti o falliti sullo stesso archivio non vengono ripetuti.\n"
-        "- ORION riceve soltanto modelli che hanno superato i controlli operativi.\n"
-        "- Se nessun candidato supera i controlli, resta attivo il profilo bilanciato protetto."
+        "- Il backtest usa lo stesso identico pipeline della proposta live.\n"
+        "- Il profilo bilanciato resta champion finché un challenger non supera dati futuri reali.\n"
+        "- Le proposte champion/challenger vengono salvate prima dell’estrazione e valutate dopo.\n"
+        "- Un buon risultato retrospettivo autorizza soltanto la modalità shadow, non la promozione."
     )
+    if challenger:
+        st.caption(f"Challenger osservato: {challenger.get('model_id')} · {challenger.get('label', '')}")
 
     st.markdown("#### Archivio")
     latest = archive.sort_values(["data", "concorso"]).iloc[-1]
@@ -991,16 +719,27 @@ def render_settings_view(
     )
     if database_error:
         st.info("La connessione principale non è disponibile; il CSV locale resta operativo.")
+    if not forge.get("persistence_ok", False):
+        st.warning(
+            "La memoria persistente di FORGE non è disponibile. Il champion resta protetto e "
+            "i risultati locali possono sparire al reboot. Dettaglio nel riquadro tecnico."
+        )
 
     with st.expander("Stato tecnico di FORGE", expanded=False):
         st.json(
             {
                 "stato": forge.get("state"),
                 "registro": forge.get("registry"),
+                "persistenza_ok": forge.get("persistence_ok"),
+                "errore_persistenza": forge.get("persistence_error"),
                 "candidati": forge.get("candidate_count"),
-                "validi": forge.get("valid_count"),
+                "shadow": forge.get("shadow_count"),
+                "non_validati": forge.get("non_validated_count"),
                 "respinti": forge.get("rejected_count"),
                 "falliti": forge.get("failed_count"),
+                "previsioni_valutate_ora": forge.get("evaluated_predictions_now"),
+                "previsioni_salvate_ora": forge.get("predictions_saved_now"),
+                "valutazione_prospettica": forge.get("prospective"),
                 "esperimenti_saltati_perche_gia_noti": forge.get("skipped_known"),
             }
         )
@@ -1021,6 +760,9 @@ def main() -> None:
     with st.spinner("FORGE verifica i modelli disponibili..."):
         forge = build_forge_snapshot_cached(records_tuple(archive))
     orion = build_orion_snapshot(archive, forge)
+    invalidate_generated_state(
+        f"{forge.get('archive_signature')}:{orion.get('signature')}:{orion.get('model_id')}"
+    )
     database_available = archive_source == "Supabase" and database_error is None
 
     navigation = render_sidebar(archive, orion, archive_source)

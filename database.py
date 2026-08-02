@@ -365,15 +365,19 @@ def delete_recommendation(recommendation_id: int) -> dict[str, int]:
 
 
 @st.cache_resource(show_spinner=False)
-def ensure_forge_experiments_table() -> None:
-    """Crea il registro persistente degli esperimenti automatici di FORGE."""
+
+
+@st.cache_resource(show_spinner=False)
+def ensure_forge_v2_tables() -> None:
+    """Crea la memoria persistente di FORGE 2 senza alterare il registro legacy."""
     statements = [
         """
-        create table if not exists public.forge_experiments (
+        create table if not exists public.forge_experiments_v2 (
             experiment_key text primary key,
             archive_signature text not null,
+            forge_version text not null,
             model_id text not null,
-            status text not null check (status in ('valid', 'rejected', 'failed')),
+            status text not null,
             quality double precision null,
             configuration jsonb not null default '{}'::jsonb,
             metrics jsonb not null default '{}'::jsonb,
@@ -384,8 +388,58 @@ def ensure_forge_experiments_table() -> None:
         )
         """,
         """
-        create index if not exists forge_experiments_archive_idx
-            on public.forge_experiments (archive_signature, status, quality desc)
+        create index if not exists forge_experiments_v2_archive_idx
+            on public.forge_experiments_v2
+            (archive_signature, forge_version, status, quality desc)
+        """,
+        """
+        create table if not exists public.forge_state (
+            id smallint primary key default 1 check (id = 1),
+            mode text not null default 'shadow',
+            champion_model jsonb not null default '{}'::jsonb,
+            challenger_model jsonb null,
+            prospective_minimum integer not null default 30,
+            note text null,
+            updated_at timestamptz not null default now()
+        )
+        """,
+        """
+        create table if not exists public.forge_predictions (
+            prediction_key text primary key,
+            archive_signature text not null,
+            forge_version text not null,
+            source_year integer not null,
+            source_contest integer not null,
+            source_date date not null,
+            role text not null check (role in ('champion', 'challenger')),
+            model_id text not null,
+            model_config jsonb not null default '{}'::jsonb,
+            n1 smallint not null,
+            n2 smallint not null,
+            n3 smallint not null,
+            n4 smallint not null,
+            n5 smallint not null,
+            n6 smallint not null,
+            status text not null default 'pending'
+                check (status in ('pending', 'evaluated', 'void')),
+            target_year integer null,
+            target_contest integer null,
+            target_date date null,
+            hits smallint null,
+            created_at timestamptz not null default now(),
+            evaluated_at timestamptz null,
+            constraint forge_predictions_numbers_ordered
+                check (n1 < n2 and n2 < n3 and n3 < n4 and n4 < n5 and n5 < n6)
+        )
+        """,
+        """
+        create index if not exists forge_predictions_pending_idx
+            on public.forge_predictions (status, source_date, role, model_id)
+        """,
+        """
+        create index if not exists forge_predictions_pair_idx
+            on public.forge_predictions
+            (archive_signature, status, role, model_id)
         """,
     ]
     with get_connection() as connection:
@@ -395,31 +449,36 @@ def ensure_forge_experiments_table() -> None:
         connection.commit()
 
 
-def fetch_forge_experiments(archive_signature: str) -> list[dict[str, object]]:
-    ensure_forge_experiments_table()
+def fetch_forge_experiments_v2(
+    archive_signature: str,
+    forge_version: str,
+) -> list[dict[str, object]]:
+    ensure_forge_v2_tables()
     query = """
-        select experiment_key, archive_signature, model_id, status, quality,
-               configuration, metrics, checks, reason, created_at, updated_at
-        from public.forge_experiments
-        where archive_signature = %s
+        select experiment_key, archive_signature, forge_version, model_id,
+               status, quality, configuration, metrics, checks, reason,
+               created_at, updated_at
+        from public.forge_experiments_v2
+        where archive_signature = %s and forge_version = %s
         order by quality desc nulls last, model_id
     """
     with get_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(query, (str(archive_signature),))
+            cursor.execute(query, (str(archive_signature), str(forge_version)))
             rows = cursor.fetchall()
     return [dict(row) for row in rows]
 
 
-def save_forge_experiment(record: Mapping[str, object]) -> dict[str, str]:
-    ensure_forge_experiments_table()
+def save_forge_experiment_v2(record: Mapping[str, object]) -> dict[str, str]:
+    ensure_forge_v2_tables()
     query = """
-        insert into public.forge_experiments (
-            experiment_key, archive_signature, model_id, status, quality,
-            configuration, metrics, checks, reason
+        insert into public.forge_experiments_v2 (
+            experiment_key, archive_signature, forge_version, model_id,
+            status, quality, configuration, metrics, checks, reason
         ) values (
-            %(experiment_key)s, %(archive_signature)s, %(model_id)s, %(status)s,
-            %(quality)s, %(configuration)s::jsonb, %(metrics)s::jsonb,
+            %(experiment_key)s, %(archive_signature)s, %(forge_version)s,
+            %(model_id)s, %(status)s, %(quality)s,
+            %(configuration)s::jsonb, %(metrics)s::jsonb,
             %(checks)s::jsonb, %(reason)s
         )
         on conflict (experiment_key) do update set
@@ -435,6 +494,7 @@ def save_forge_experiment(record: Mapping[str, object]) -> dict[str, str]:
     payload = {
         "experiment_key": str(record["experiment_key"]),
         "archive_signature": str(record["archive_signature"]),
+        "forge_version": str(record["forge_version"]),
         "model_id": str(record["model_id"]),
         "status": str(record["status"]),
         "quality": record.get("quality"),
@@ -449,3 +509,180 @@ def save_forge_experiment(record: Mapping[str, object]) -> dict[str, str]:
             saved = cursor.fetchone()
         connection.commit()
     return {"experiment_key": str(saved["experiment_key"])}
+
+
+def fetch_forge_state() -> dict[str, object] | None:
+    ensure_forge_v2_tables()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select id, mode, champion_model, challenger_model,
+                       prospective_minimum, note, updated_at
+                from public.forge_state where id = 1
+                """
+            )
+            row = cursor.fetchone()
+    return None if row is None else dict(row)
+
+
+def save_forge_state(record: Mapping[str, object]) -> dict[str, object]:
+    ensure_forge_v2_tables()
+    query = """
+        insert into public.forge_state (
+            id, mode, champion_model, challenger_model,
+            prospective_minimum, note
+        ) values (
+            1, %(mode)s, %(champion_model)s::jsonb,
+            %(challenger_model)s::jsonb, %(prospective_minimum)s, %(note)s
+        )
+        on conflict (id) do update set
+            mode = excluded.mode,
+            champion_model = excluded.champion_model,
+            challenger_model = excluded.challenger_model,
+            prospective_minimum = excluded.prospective_minimum,
+            note = excluded.note,
+            updated_at = now()
+        returning mode, updated_at
+    """
+    challenger = record.get("challenger_model")
+    payload = {
+        "mode": str(record.get("mode", "shadow")),
+        "champion_model": json.dumps(
+            record.get("champion_model", {}), ensure_ascii=False, default=str
+        ),
+        "challenger_model": (
+            None
+            if challenger is None
+            else json.dumps(challenger, ensure_ascii=False, default=str)
+        ),
+        "prospective_minimum": int(record.get("prospective_minimum", 30)),
+        "note": record.get("note"),
+    }
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(query, payload)
+            saved = cursor.fetchone()
+        connection.commit()
+    return dict(saved)
+
+
+def save_forge_prediction(record: Mapping[str, object]) -> dict[str, str]:
+    ensure_forge_v2_tables()
+    numbers = tuple(sorted(int(value) for value in record["numbers"]))
+    if len(numbers) != 6 or len(set(numbers)) != 6:
+        raise ValueError("La previsione FORGE deve contenere sei numeri distinti.")
+    query = """
+        insert into public.forge_predictions (
+            prediction_key, archive_signature, forge_version,
+            source_year, source_contest, source_date,
+            role, model_id, model_config,
+            n1, n2, n3, n4, n5, n6
+        ) values (
+            %(prediction_key)s, %(archive_signature)s, %(forge_version)s,
+            %(source_year)s, %(source_contest)s, %(source_date)s,
+            %(role)s, %(model_id)s, %(model_config)s::jsonb,
+            %(n1)s, %(n2)s, %(n3)s, %(n4)s, %(n5)s, %(n6)s
+        )
+        on conflict (prediction_key) do nothing
+        returning prediction_key
+    """
+    payload: dict[str, object] = {
+        "prediction_key": str(record["prediction_key"]),
+        "archive_signature": str(record["archive_signature"]),
+        "forge_version": str(record["forge_version"]),
+        "source_year": int(record["source_year"]),
+        "source_contest": int(record["source_contest"]),
+        "source_date": record["source_date"],
+        "role": str(record["role"]),
+        "model_id": str(record["model_id"]),
+        "model_config": json.dumps(
+            record.get("model_config", {}), ensure_ascii=False, default=str
+        ),
+    }
+    payload.update({f"n{index}": numbers[index - 1] for index in range(1, 7)})
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(query, payload)
+            saved = cursor.fetchone()
+        connection.commit()
+    return {
+        "prediction_key": (
+            str(saved["prediction_key"]) if saved else str(record["prediction_key"])
+        )
+    }
+
+
+def fetch_pending_forge_predictions() -> list[dict[str, object]]:
+    ensure_forge_v2_tables()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select prediction_key, archive_signature, forge_version,
+                       source_year, source_contest, source_date,
+                       role, model_id, model_config,
+                       n1, n2, n3, n4, n5, n6, status
+                from public.forge_predictions
+                where status = 'pending'
+                order by source_date, created_at
+                """
+            )
+            rows = cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+def evaluate_forge_prediction(
+    prediction_key: str,
+    *,
+    target_year: int,
+    target_contest: int,
+    target_date: object,
+    hits: int,
+) -> dict[str, str]:
+    ensure_forge_v2_tables()
+    query = """
+        update public.forge_predictions
+        set status = 'evaluated',
+            target_year = %s,
+            target_contest = %s,
+            target_date = %s,
+            hits = %s,
+            evaluated_at = now()
+        where prediction_key = %s and status = 'pending'
+        returning prediction_key
+    """
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                query,
+                (
+                    int(target_year),
+                    int(target_contest),
+                    target_date,
+                    int(hits),
+                    str(prediction_key),
+                ),
+            )
+            saved = cursor.fetchone()
+        connection.commit()
+    return {"prediction_key": str(saved["prediction_key"])} if saved else {}
+
+
+def fetch_evaluated_forge_predictions() -> list[dict[str, object]]:
+    ensure_forge_v2_tables()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select prediction_key, archive_signature, role, model_id,
+                       source_year, source_contest, source_date,
+                       target_year, target_contest, target_date, hits,
+                       model_config, evaluated_at
+                from public.forge_predictions
+                where status = 'evaluated'
+                order by source_date, role
+                """
+            )
+            rows = cursor.fetchall()
+    return [dict(row) for row in rows]
