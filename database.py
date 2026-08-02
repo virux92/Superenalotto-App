@@ -9,6 +9,8 @@ import psycopg
 from psycopg.rows import dict_row
 import streamlit as st
 
+from services.archive_service import normalize_archive_dataframe
+
 
 class DatabaseConfigurationError(RuntimeError):
     """Raised when the database secret is missing or malformed."""
@@ -92,17 +94,10 @@ def fetch_draws() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
-def import_draws(dataframe: pd.DataFrame, source: str = "import_csv_iniziale") -> dict[str, int]:
-    required = [
-        "data", "anno", "concorso", "n1", "n2", "n3", "n4", "n5", "n6", "jolly", "superstar"
-    ]
-    missing = [column for column in required if column not in dataframe.columns]
-    if missing:
-        raise ValueError("Colonne mancanti: " + ", ".join(missing))
-
-    frame = dataframe[required].copy()
-    frame["data"] = pd.to_datetime(frame["data"], errors="raise").dt.date
-
+def _write_draw_records(
+    dataframe: pd.DataFrame, source: str, log_action: str
+) -> dict[str, int]:
+    """Scrive righe già validate nell'archivio Supabase."""
     sql = """
         insert into public.estrazioni (
             data_estrazione, concorso,
@@ -127,19 +122,15 @@ def import_draws(dataframe: pd.DataFrame, source: str = "import_csv_iniziale") -
     """
 
     records: list[dict[str, object]] = []
-    for row in frame.to_dict(orient="records"):
-        numbers = sorted(int(row[f"n{i}"]) for i in range(1, 7))
-        if len(set(numbers)) != 6 or not all(1 <= number <= 90 for number in numbers):
-            raise ValueError(f"Numeri non validi per {row['anno']} concorso {row['concorso']}.")
-
+    for row in dataframe.to_dict(orient="records"):
         record: dict[str, object] = {
-            "data": row["data"],
+            "data": pd.Timestamp(row["data"]).date(),
             "concorso": int(row["concorso"]),
             "fonte": source,
             "jolly": None if pd.isna(row["jolly"]) else int(row["jolly"]),
-            "superstar": None if pd.isna(row["superstar"]) else int(row["superstar"]),
+            "superstar": int(row["superstar"]),
         }
-        record.update({f"n{i}": numbers[i - 1] for i in range(1, 7)})
+        record.update({f"n{i}": int(row[f"n{i}"]) for i in range(1, 7)})
         records.append(record)
 
     with get_connection() as connection:
@@ -148,9 +139,10 @@ def import_draws(dataframe: pd.DataFrame, source: str = "import_csv_iniziale") -
             cursor.execute(
                 """
                 insert into public.log_operazioni (livello, categoria, azione, messaggio, dettagli)
-                values ('info', 'archivio', 'importazione_estrazioni', %s, %s::jsonb)
+                values ('info', 'archivio', %s, %s, %s::jsonb)
                 """,
                 (
+                    log_action,
                     f"Importate o aggiornate {len(records)} estrazioni",
                     json.dumps({"origine": source}, ensure_ascii=False),
                 ),
@@ -160,9 +152,41 @@ def import_draws(dataframe: pd.DataFrame, source: str = "import_csv_iniziale") -
     return {"processed": len(records)}
 
 
-def upsert_draw(draw: Mapping[str, object], source: str = "inserimento_manuale") -> dict[str, int]:
-    """Inserisce o aggiorna una singola estrazione usando gli stessi controlli dell'import."""
-    return import_draws(pd.DataFrame([dict(draw)]), source=source)
+def import_draws(
+    dataframe: pd.DataFrame, source: str = "import_csv_iniziale"
+) -> dict[str, int]:
+    """Importa un archivio completo dopo la validazione centrale."""
+    canonical = normalize_archive_dataframe(dataframe)
+    return _write_draw_records(canonical, source, "importazione_estrazioni")
+
+
+def upsert_draw(
+    draw: Mapping[str, object], source: str = "inserimento_manuale"
+) -> dict[str, int]:
+    """Inserisce o aggiorna una riga validando l'intero archivio risultante."""
+    existing = fetch_draws()
+    incoming = pd.DataFrame([dict(draw)])
+
+    if existing.empty:
+        candidate = incoming
+    else:
+        incoming_year = int(incoming.iloc[0]["anno"])
+        incoming_contest = int(incoming.iloc[0]["concorso"])
+        keep_mask = ~(
+            (existing["anno"].astype(int) == incoming_year)
+            & (existing["concorso"].astype(int) == incoming_contest)
+        )
+        candidate = pd.concat([existing.loc[keep_mask], incoming], ignore_index=True)
+
+    canonical = normalize_archive_dataframe(candidate)
+    validated_row = canonical.loc[
+        (canonical["anno"] == int(incoming.iloc[0]["anno"]))
+        & (canonical["concorso"] == int(incoming.iloc[0]["concorso"]))
+    ]
+    if len(validated_row) != 1:
+        raise ValueError("L'estrazione da salvare non è stata validata in modo univoco.")
+
+    return _write_draw_records(validated_row, source, "salvataggio_estrazione")
 
 
 def delete_draw(year: int, contest: int, source: str = "eliminazione_manuale") -> dict[str, int]:

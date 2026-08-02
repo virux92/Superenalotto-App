@@ -33,6 +33,48 @@ def dataframe_to_history(dataframe: pd.DataFrame) -> list[dict[str, Any]]:
     return history
 
 
+def _validate_draw_numbers(
+    numbers: list[int], jolly: int | None, superstar: int
+) -> tuple[list[int], int | None, int]:
+    """Valida sestina, Jolly e SuperStar con le regole di una singola estrazione."""
+    validated_numbers = [
+        int(validate_number(number, f"N{index}"))
+        for index, number in enumerate(numbers, start=1)
+    ]
+    if len(set(validated_numbers)) != 6:
+        raise ValueError("I sei numeri devono essere tutti differenti.")
+
+    validated_jolly = validate_number(jolly, "Jolly", allow_empty=True)
+    if validated_jolly is not None and int(validated_jolly) in set(validated_numbers):
+        raise ValueError("Il Jolly deve essere diverso dai sei numeri estratti.")
+
+    validated_superstar = int(validate_number(superstar, "SuperStar"))
+    return validated_numbers, validated_jolly, validated_superstar
+
+
+def _neighbor_dates(
+    dataframe: pd.DataFrame, year: int, contest: int
+) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+    """Restituisce le date dei concorsi immediatamente precedente e successivo."""
+    ordered = dataframe.sort_values(["anno", "concorso"]).reset_index(drop=True)
+    matches = ordered.index[
+        (ordered["anno"] == int(year)) & (ordered["concorso"] == int(contest))
+    ].tolist()
+    if len(matches) != 1:
+        raise ValueError(f"Concorso {contest} del {year} non trovato in modo univoco.")
+
+    position = int(matches[0])
+    previous_date = (
+        pd.Timestamp(ordered.iloc[position - 1]["data"]) if position > 0 else None
+    )
+    next_date = (
+        pd.Timestamp(ordered.iloc[position + 1]["data"])
+        if position + 1 < len(ordered)
+        else None
+    )
+    return previous_date, next_date
+
+
 def add_extraction(
     dataframe: pd.DataFrame,
     draw_date: date,
@@ -50,15 +92,16 @@ def add_extraction(
     if (dataframe["data"] == timestamp).any():
         raise ValueError(f"Esiste già un'estrazione in data {draw_date:%d/%m/%Y}.")
 
-    validated_numbers = [
-        int(validate_number(number, f"N{index}"))
-        for index, number in enumerate(numbers, start=1)
-    ]
-    if len(set(validated_numbers)) != 6:
-        raise ValueError("I sei numeri devono essere tutti differenti.")
+    latest_date = pd.Timestamp(dataframe["data"].max())
+    if timestamp <= latest_date:
+        raise ValueError(
+            "La nuova estrazione deve avere una data successiva all'ultima presente "
+            f"({latest_date:%d/%m/%Y})."
+        )
 
-    validated_jolly = validate_number(jolly, "Jolly", allow_empty=True)
-    validated_superstar = int(validate_number(superstar, "SuperStar"))
+    validated_numbers, validated_jolly, validated_superstar = _validate_draw_numbers(
+        numbers, jolly, superstar
+    )
 
     expected_next = (
         int(dataframe.loc[dataframe["anno"] == year, "concorso"].max()) + 1
@@ -111,15 +154,21 @@ def update_extraction(
     if duplicate_date:
         raise ValueError(f"Esiste già un'altra estrazione in data {draw_date:%d/%m/%Y}.")
 
-    validated_numbers = [
-        int(validate_number(number, f"N{index}"))
-        for index, number in enumerate(numbers, start=1)
-    ]
-    if len(set(validated_numbers)) != 6:
-        raise ValueError("I sei numeri devono essere tutti differenti.")
+    previous_date, next_date = _neighbor_dates(dataframe, year, contest)
+    if previous_date is not None and timestamp <= previous_date:
+        raise ValueError(
+            "La data deve essere successiva al concorso precedente "
+            f"({previous_date:%d/%m/%Y})."
+        )
+    if next_date is not None and timestamp >= next_date:
+        raise ValueError(
+            "La data deve essere precedente al concorso successivo "
+            f"({next_date:%d/%m/%Y})."
+        )
 
-    validated_jolly = validate_number(jolly, "Jolly", allow_empty=True)
-    validated_superstar = int(validate_number(superstar, "SuperStar"))
+    validated_numbers, validated_jolly, validated_superstar = _validate_draw_numbers(
+        numbers, jolly, superstar
+    )
 
     updated = dataframe.copy()
     row_index = updated.index[mask][0]

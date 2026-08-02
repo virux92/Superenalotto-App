@@ -40,7 +40,7 @@ from ui.orion_ui import (
     render_number_balls,
 )
 
-APP_TITLE = "ORION v2.7.4.3 — SuperEnalotto Quant Engine"
+APP_TITLE = "ORION v2.7.4.4 — SuperEnalotto Quant Engine"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🌌", layout="wide")
@@ -761,7 +761,7 @@ def render_archive_tab(archive: pd.DataFrame, database_available: bool) -> None:
                         (validated_archive["anno"] == draw_date.year)
                         & (validated_archive["concorso"] == contest)
                     ].iloc[0]
-                    upsert_draw(new_row.to_dict(), source="inserimento_app_v2_7_4_3")
+                    upsert_draw(new_row.to_dict(), source="inserimento_app_v2_7_4_4")
                 except Exception as exc:
                     st.error(str(exc))
                 else:
@@ -862,7 +862,7 @@ def render_archive_tab(archive: pd.DataFrame, database_available: bool) -> None:
                         & (corrected_archive["concorso"] == selected_contest)
                     ].iloc[0]
                     upsert_draw(
-                        corrected_row.to_dict(), source="correzione_app_v2_7_4_3"
+                        corrected_row.to_dict(), source="correzione_app_v2_7_4_4"
                     )
                 except Exception as exc:
                     st.error(str(exc))
@@ -898,7 +898,7 @@ def render_archive_tab(archive: pd.DataFrame, database_available: bool) -> None:
                         delete_draw(
                             latest_year,
                             latest_contest,
-                            source="eliminazione_app_v2_7_4_3",
+                            source="eliminazione_app_v2_7_4_4",
                         )
                     except Exception as exc:
                         st.error(str(exc))

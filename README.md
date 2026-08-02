@@ -1,17 +1,25 @@
 # ORION — SuperEnalotto Quant Engine
 
-Versione **2.7.4.3**.
+Versione **2.7.4.4**.
 
 ORION è un motore statistico multi-memoria con interfaccia Streamlit. FORGE 2 lavora dietro le quinte in modalità **champion/challenger**: il profilo bilanciato resta attivo, mentre un challenger viene osservato senza influenzare le schedine live finché non supera una verifica prospettica su estrazioni future.
 
-## Cosa cambia nella 2.7.4.3
+## Cosa cambia nella 2.7.4.4
+
+- Il Jolly deve essere diverso da tutti i sei numeri principali; il SuperStar resta indipendente.
+- Una nuova estrazione deve avere data strettamente successiva all'ultima presente.
+- La data corretta di un concorso deve restare tra le date dei concorsi immediatamente precedente e successivo.
+- Le stesse regole vengono applicate all'archivio caricato, agli import completi e agli upsert diretti verso Supabase.
+- Gli archivi con date fuori sequenza o Jolly duplicato vengono rifiutati con un messaggio esplicito.
+- Nessuna modifica all'algoritmo ORION (`2.7.4`), ai modelli FORGE o alle soglie prospettiche.
+
+## Correzione precedente 2.7.4.3
 
 - Ripristinata in **Archivio** la gestione permanente delle estrazioni.
-- Aggiunti inserimento del prossimo concorso, correzione dei dati e cancellazione protetta dell’ultima estrazione.
+- Aggiunti inserimento del prossimo concorso, correzione dei dati e cancellazione protetta dell'ultima estrazione.
 - Ogni scrittura svuota le cache e ricalcola automaticamente ORION e FORGE sul nuovo archivio Supabase.
-- Inserimento e correzione riutilizzano i controlli centrali su sequenza dei concorsi, date, numeri distinti, Jolly e SuperStar.
-- La cancellazione dell’ultima estrazione è protetta sia nell’interfaccia sia nel livello database.
-- Nessuna modifica all’algoritmo ORION (`2.7.4`), ai cinque modelli FORGE o alle soglie prospettiche.
+- La cancellazione dell'ultima estrazione è protetta sia nell'interfaccia sia nel livello database.
+- Nessuna modifica all'algoritmo ORION (`2.7.4`).
 
 ## Correzione precedente 2.7.4.2
 

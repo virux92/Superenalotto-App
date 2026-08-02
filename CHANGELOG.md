@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.7.4.4 — Integrità estrazioni rafforzata
+
+- Il Jolly viene rifiutato se coincide con uno dei sei numeri principali.
+- Le nuove estrazioni devono avere data successiva all'ultima estrazione presente.
+- La correzione di una data è consentita soltanto tra i concorsi immediatamente precedente e successivo.
+- La normalizzazione dell'archivio rifiuta Jolly duplicati e date fuori sequenza per identità anno/concorso.
+- Import completi e upsert diretti su Supabase usano la stessa validazione centrale dell'app.
+- Aggiunti test di regressione per Jolly, nuova data e limiti cronologici delle correzioni.
+- Versione visibile aggiornata a `2.7.4.4`; versione algoritmica invariata a `2.7.4`.
+
 ## 2.7.4.3 — Gestione estrazioni ripristinata
 
 - Ripristinati nella pagina Archivio i pannelli **Nuova estrazione** e **Correggi o elimina**.

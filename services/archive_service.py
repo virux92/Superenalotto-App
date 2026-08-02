@@ -111,7 +111,14 @@ def normalize_archive_dataframe(raw_dataframe: pd.DataFrame) -> pd.DataFrame:
                 f"Numeri non in ordine crescente alla riga {row_number}: {numbers}."
             )
         validate_number(row.superstar, f"SuperStar alla riga {row_number}")
-        validate_number(row.jolly, f"Jolly alla riga {row_number}", allow_empty=True)
+        validated_jolly = validate_number(
+            row.jolly, f"Jolly alla riga {row_number}", allow_empty=True
+        )
+        if validated_jolly is not None and int(validated_jolly) in set(numbers):
+            raise ValueError(
+                f"Jolly duplicato nella sestina alla riga {row_number}: "
+                f"{int(validated_jolly)}."
+            )
 
     for year, group in dataframe.groupby("anno"):
         contests = sorted(group["concorso"].tolist())
@@ -123,6 +130,19 @@ def normalize_archive_dataframe(raw_dataframe: pd.DataFrame) -> pd.DataFrame:
                 f"Nel {year} mancano concorsi nella sequenza: {preview}"
                 + ("..." if len(missing) > 10 else "")
             )
+
+    contest_order = dataframe.sort_values(["anno", "concorso"]).reset_index(drop=True)
+    previous = None
+    for row in contest_order.itertuples(index=False):
+        if previous is not None and pd.Timestamp(row.data) <= pd.Timestamp(previous.data):
+            raise ValueError(
+                "Date fuori sequenza: "
+                f"il concorso {int(row.concorso)}/{int(row.anno)} del "
+                f"{pd.Timestamp(row.data):%d/%m/%Y} non è successivo al concorso "
+                f"{int(previous.concorso)}/{int(previous.anno)} del "
+                f"{pd.Timestamp(previous.data):%d/%m/%Y}."
+            )
+        previous = row
 
     return dataframe.sort_values(["data", "anno", "concorso"]).reset_index(drop=True)
 

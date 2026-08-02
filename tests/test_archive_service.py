@@ -21,6 +21,21 @@ class ArchiveServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ordine crescente"):
             normalize_archive_dataframe(frame)
 
+    def test_jolly_equal_to_main_number_is_rejected(self) -> None:
+        frame = synthetic_archive(10)
+        frame.loc[0, "jolly"] = int(frame.loc[0, "n3"])
+        with self.assertRaisesRegex(ValueError, "Jolly duplicato"):
+            normalize_archive_dataframe(frame)
+
+    def test_dates_out_of_contest_sequence_are_rejected(self) -> None:
+        frame = synthetic_archive(10)
+        pandas = __import__("pandas")
+        start = frame["data"].min()
+        frame["data"] = [start + pandas.Timedelta(days=index * 3) for index in range(len(frame))]
+        frame.loc[5, "data"] = frame.loc[4, "data"] - pandas.Timedelta(days=1)
+        with self.assertRaisesRegex(ValueError, "Date fuori sequenza"):
+            normalize_archive_dataframe(frame)
+
 
 if __name__ == "__main__":
     unittest.main()

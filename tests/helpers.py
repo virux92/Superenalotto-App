@@ -13,13 +13,17 @@ def synthetic_archive(draw_count: int = 80) -> pd.DataFrame:
         while len(numbers) < 6:
             numbers.append((numbers[-1] % 90) + 1)
             numbers = sorted(set(numbers))
+        jolly = pd.NA if index % 17 == 0 else ((index * 3) % 90) + 1
+        if not pd.isna(jolly):
+            while int(jolly) in numbers:
+                jolly = (int(jolly) % 90) + 1
         rows.append(
             {
                 "data": pd.Timestamp(start + timedelta(days=index)),
                 "anno": 2025,
                 "concorso": index + 1,
                 **{f"n{position}": number for position, number in enumerate(numbers, 1)},
-                "jolly": pd.NA if index % 17 == 0 else ((index * 3) % 90) + 1,
+                "jolly": jolly,
                 "superstar": ((index * 5) % 90) + 1,
             }
         )
