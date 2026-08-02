@@ -24,6 +24,33 @@ class DrawServiceTests(unittest.TestCase):
         self.assertEqual(int(row["concorso"]), 31)
         self.assertEqual([int(row[f"n{i}"]) for i in range(1, 7)], [10, 20, 30, 40, 50, 90])
 
+
+    def test_add_extraction_rejects_skipped_contest(self) -> None:
+        frame = synthetic_archive(30)
+        draw_date = frame["data"].max().date() + timedelta(days=1)
+        with self.assertRaisesRegex(ValueError, "prossimo concorso atteso"):
+            add_extraction(
+                frame,
+                draw_date,
+                32,
+                [10, 20, 30, 40, 50, 60],
+                70,
+                80,
+            )
+
+    def test_add_extraction_rejects_duplicate_numbers(self) -> None:
+        frame = synthetic_archive(30)
+        draw_date = frame["data"].max().date() + timedelta(days=1)
+        with self.assertRaisesRegex(ValueError, "tutti differenti"):
+            add_extraction(
+                frame,
+                draw_date,
+                31,
+                [10, 10, 20, 30, 40, 50],
+                60,
+                70,
+            )
+
     def test_update_extraction_keeps_identity_and_normalizes_numbers(self) -> None:
         frame = synthetic_archive(30)
         original = frame.iloc[-1]

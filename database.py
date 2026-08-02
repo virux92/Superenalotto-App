@@ -168,11 +168,32 @@ def upsert_draw(draw: Mapping[str, object], source: str = "inserimento_manuale")
 def delete_draw(year: int, contest: int, source: str = "eliminazione_manuale") -> dict[str, int]:
     """Elimina un concorso esistente e registra l'operazione.
 
-    La UI espone questa funzione soltanto per l'ultima estrazione dell'archivio,
-    evitando buchi nella sequenza annuale.
+    Il controllo viene applicato anche a livello database, così una chiamata
+    diretta non può creare buchi nella sequenza annuale.
     """
     with get_connection() as connection:
         with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select anno, concorso
+                from public.estrazioni
+                order by data_estrazione desc, anno desc, concorso desc
+                limit 1
+                for update
+                """
+            )
+            latest = cursor.fetchone()
+            if latest is None:
+                raise ValueError("L'archivio è vuoto.")
+            if (int(latest["anno"]), int(latest["concorso"])) != (
+                int(year),
+                int(contest),
+            ):
+                raise ValueError(
+                    "Per sicurezza è possibile eliminare soltanto l'ultima estrazione "
+                    f"({int(latest['concorso'])}/{int(latest['anno'])})."
+                )
+
             cursor.execute(
                 """
                 delete from public.estrazioni

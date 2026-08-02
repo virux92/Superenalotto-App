@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +16,15 @@ from core.combinations import (
     system_cost,
 )
 from database import (
+    delete_draw,
     delete_recommendation,
     fetch_draws,
     fetch_recommendations,
     save_recommendation,
+    upsert_draw,
 )
 from services.archive_service import load_primary_archive
+from services.draw_service import add_extraction, update_extraction
 from services.recommendation_service import (
     build_monitoring_tables,
     suggest_next_target,
@@ -36,7 +40,7 @@ from ui.orion_ui import (
     render_number_balls,
 )
 
-APP_TITLE = "ORION v2.7.4.2 — SuperEnalotto Quant Engine"
+APP_TITLE = "ORION v2.7.4.3 — SuperEnalotto Quant Engine"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🌌", layout="wide")
@@ -617,21 +621,291 @@ def render_monitored_tickets_tab(
                 st.rerun()
 
 
-def render_archive_tab(archive: pd.DataFrame) -> None:
-    st.subheader("Archivio completo")
-    year_options = ["Tutti"] + sorted(archive["anno"].unique().tolist(), reverse=True)
-    selected_year = st.selectbox("Anno", year_options)
-
-    display_archive = archive.copy()
-    if selected_year != "Tutti":
-        display_archive = display_archive[display_archive["anno"] == int(selected_year)]
-
-    display_archive = display_archive.sort_values("data", ascending=False)
-    display_archive["data"] = display_archive["data"].dt.strftime("%d/%m/%Y")
-    display_archive["jolly"] = display_archive["jolly"].astype("Int64")
-    st.dataframe(display_archive, use_container_width=True, hide_index=True, height=600)
+def refresh_after_archive_write(message: str) -> None:
+    """Svuota le cache dopo una scrittura e mostra l'esito al rerun successivo."""
+    st.cache_data.clear()
+    st.session_state["archive_flash"] = message
+    st.rerun()
 
 
+def render_draw_fields(prefix: str, values: list[int]) -> list[int]:
+    columns = st.columns(6)
+    return [
+        int(
+            columns[index - 1].number_input(
+                f"N{index}",
+                min_value=1,
+                max_value=90,
+                value=int(values[index - 1]),
+                step=1,
+                key=f"{prefix}_n{index}",
+            )
+        )
+        for index in range(1, 7)
+    ]
+
+
+def render_archive_tab(archive: pd.DataFrame, database_available: bool) -> None:
+    st.subheader("Archivio estrazioni")
+
+    flash_message = st.session_state.pop("archive_flash", None)
+    if flash_message:
+        st.success(str(flash_message))
+
+    archive_tab, add_tab, edit_tab = st.tabs(
+        ["Archivio", "Nuova estrazione", "Correggi o elimina"]
+    )
+
+    with archive_tab:
+        year_options = ["Tutti"] + sorted(
+            archive["anno"].unique().tolist(), reverse=True
+        )
+        selected_year = st.selectbox("Anno", year_options, key="archive_year_filter")
+
+        display_archive = archive.copy()
+        if selected_year != "Tutti":
+            display_archive = display_archive[
+                display_archive["anno"] == int(selected_year)
+            ]
+
+        display_archive = display_archive.sort_values("data", ascending=False)
+        display_archive["data"] = display_archive["data"].dt.strftime("%d/%m/%Y")
+        display_archive["jolly"] = display_archive["jolly"].astype("Int64")
+        st.dataframe(
+            display_archive,
+            use_container_width=True,
+            hide_index=True,
+            height=600,
+        )
+
+    with add_tab:
+        st.markdown("#### Inserisci una nuova estrazione")
+        st.caption(
+            "Il salvataggio modifica direttamente l’archivio Supabase. "
+            "Dopo il salvataggio ORION e FORGE vengono ricalcolati automaticamente."
+        )
+
+        if not database_available:
+            st.warning(
+                "L’inserimento richiede Supabase. L’app sta usando il CSV di emergenza, "
+                "quindi il modulo è temporaneamente disattivato."
+            )
+        else:
+            latest = archive.sort_values(["data", "concorso"]).iloc[-1]
+            earliest_next = pd.Timestamp(latest["data"]).date() + timedelta(days=1)
+            suggested_date = max(earliest_next, date.today())
+            suggested_contest = (
+                int(latest["concorso"]) + 1
+                if suggested_date.year == int(latest["anno"])
+                else 1
+            )
+
+            with st.form("add_draw_form", clear_on_submit=False):
+                identity_columns = st.columns(2)
+                draw_date = identity_columns[0].date_input(
+                    "Data estrazione", value=suggested_date
+                )
+                contest = int(
+                    identity_columns[1].number_input(
+                        "Numero concorso",
+                        min_value=1,
+                        value=int(suggested_contest),
+                        step=1,
+                    )
+                )
+
+                st.caption("Inserisci i sei numeri; saranno salvati in ordine crescente.")
+                numbers = render_draw_fields("add_draw", [1, 2, 3, 4, 5, 6])
+
+                extra_columns = st.columns(3)
+                jolly_available = extra_columns[0].checkbox(
+                    "Jolly disponibile", value=True, key="add_jolly_available"
+                )
+                jolly = int(
+                    extra_columns[1].number_input(
+                        "Jolly",
+                        min_value=1,
+                        max_value=90,
+                        value=7,
+                        step=1,
+                        disabled=not jolly_available,
+                        key="add_jolly",
+                    )
+                )
+                superstar = int(
+                    extra_columns[2].number_input(
+                        "SuperStar",
+                        min_value=1,
+                        max_value=90,
+                        value=8,
+                        step=1,
+                        key="add_superstar",
+                    )
+                )
+
+                submitted = st.form_submit_button(
+                    "Salva estrazione", type="primary", use_container_width=True
+                )
+
+            if submitted:
+                try:
+                    validated_archive = add_extraction(
+                        archive,
+                        draw_date,
+                        contest,
+                        numbers,
+                        jolly if jolly_available else None,
+                        superstar,
+                    )
+                    new_row = validated_archive.loc[
+                        (validated_archive["anno"] == draw_date.year)
+                        & (validated_archive["concorso"] == contest)
+                    ].iloc[0]
+                    upsert_draw(new_row.to_dict(), source="inserimento_app_v2_7_4_3")
+                except Exception as exc:
+                    st.error(str(exc))
+                else:
+                    refresh_after_archive_write(
+                        f"Concorso {contest} del {draw_date.year} salvato correttamente."
+                    )
+
+    with edit_tab:
+        st.markdown("#### Correggi un’estrazione")
+        st.caption(
+            "Puoi correggere data, numeri, Jolly e SuperStar. "
+            "Anno e numero del concorso restano invariati."
+        )
+
+        if not database_available:
+            st.warning(
+                "La modifica richiede Supabase. L’app sta usando il CSV di emergenza."
+            )
+        else:
+            year_options = sorted(archive["anno"].unique().tolist(), reverse=True)
+            selected_year = int(
+                st.selectbox("Anno", year_options, key="edit_draw_year")
+            )
+            year_frame = archive[archive["anno"] == selected_year]
+            contest_options = sorted(
+                year_frame["concorso"].unique().tolist(), reverse=True
+            )
+            selected_contest = int(
+                st.selectbox("Concorso", contest_options, key="edit_draw_contest")
+            )
+            selected = year_frame[
+                year_frame["concorso"] == selected_contest
+            ].iloc[0]
+
+            with st.form(f"edit_draw_form_{selected_year}_{selected_contest}"):
+                draw_date = st.date_input(
+                    "Data estrazione",
+                    value=pd.Timestamp(selected["data"]).date(),
+                    key=f"edit_draw_date_{selected_year}_{selected_contest}",
+                )
+                current_numbers = [
+                    int(selected[f"n{index}"]) for index in range(1, 7)
+                ]
+                numbers = render_draw_fields(
+                    f"edit_draw_{selected_year}_{selected_contest}", current_numbers
+                )
+
+                selected_jolly_available = not pd.isna(selected["jolly"])
+                extra_columns = st.columns(3)
+                jolly_available = extra_columns[0].checkbox(
+                    "Jolly disponibile",
+                    value=selected_jolly_available,
+                    key=f"edit_jolly_available_{selected_year}_{selected_contest}",
+                )
+                jolly = int(
+                    extra_columns[1].number_input(
+                        "Jolly",
+                        min_value=1,
+                        max_value=90,
+                        value=(
+                            int(selected["jolly"])
+                            if selected_jolly_available
+                            else 1
+                        ),
+                        step=1,
+                        disabled=not jolly_available,
+                        key=f"edit_jolly_{selected_year}_{selected_contest}",
+                    )
+                )
+                superstar = int(
+                    extra_columns[2].number_input(
+                        "SuperStar",
+                        min_value=1,
+                        max_value=90,
+                        value=int(selected["superstar"]),
+                        step=1,
+                        key=f"edit_superstar_{selected_year}_{selected_contest}",
+                    )
+                )
+
+                submitted_edit = st.form_submit_button(
+                    "Salva correzione", type="primary", use_container_width=True
+                )
+
+            if submitted_edit:
+                try:
+                    corrected_archive = update_extraction(
+                        archive,
+                        selected_year,
+                        selected_contest,
+                        draw_date,
+                        numbers,
+                        jolly if jolly_available else None,
+                        superstar,
+                    )
+                    corrected_row = corrected_archive.loc[
+                        (corrected_archive["anno"] == selected_year)
+                        & (corrected_archive["concorso"] == selected_contest)
+                    ].iloc[0]
+                    upsert_draw(
+                        corrected_row.to_dict(), source="correzione_app_v2_7_4_3"
+                    )
+                except Exception as exc:
+                    st.error(str(exc))
+                else:
+                    refresh_after_archive_write(
+                        f"Concorso {selected_contest} del {selected_year} corretto."
+                    )
+
+            st.divider()
+            with st.expander("Zona pericolosa — elimina l’ultima estrazione"):
+                latest = archive.sort_values(["data", "concorso"]).iloc[-1]
+                latest_year = int(latest["anno"])
+                latest_contest = int(latest["concorso"])
+                st.warning(
+                    f"È eliminabile soltanto l’ultima estrazione: concorso "
+                    f"{latest_contest}/{latest_year} del "
+                    f"{pd.Timestamp(latest['data']):%d/%m/%Y}. "
+                    "Usa questa funzione soltanto per correggere un inserimento errato. "
+                    "Non è un rollback delle valutazioni prospettiche FORGE."
+                )
+                confirmation_text = f"ELIMINA {latest_contest}"
+                typed_confirmation = st.text_input(
+                    f"Per confermare scrivi {confirmation_text}",
+                    key="delete_latest_draw_confirmation",
+                )
+                if st.button(
+                    "Elimina definitivamente l’ultima estrazione",
+                    disabled=typed_confirmation.strip() != confirmation_text,
+                    use_container_width=True,
+                    key="delete_latest_draw_button",
+                ):
+                    try:
+                        delete_draw(
+                            latest_year,
+                            latest_contest,
+                            source="eliminazione_app_v2_7_4_3",
+                        )
+                    except Exception as exc:
+                        st.error(str(exc))
+                    else:
+                        refresh_after_archive_write(
+                            f"Concorso {latest_contest} del {latest_year} eliminato."
+                        )
 
 
 def render_home_view(
@@ -773,7 +1047,7 @@ def main() -> None:
     elif navigation == "Schedine":
         render_monitored_tickets_tab(archive, database_available)
     elif navigation == "Archivio":
-        render_archive_tab(archive)
+        render_archive_tab(archive, database_available)
     else:
         render_settings_view(archive, forge, archive_source, database_error)
 

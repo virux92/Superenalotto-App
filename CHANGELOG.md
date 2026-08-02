@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.7.4.3 — Gestione estrazioni ripristinata
+
+- Ripristinati nella pagina Archivio i pannelli **Nuova estrazione** e **Correggi o elimina**.
+- L’inserimento salva direttamente in Supabase e accetta soltanto il prossimo concorso sequenziale.
+- La correzione mantiene fissi anno e numero del concorso e valida data, sestina, Jolly e SuperStar.
+- La cancellazione richiede conferma testuale ed è limitata all’ultima estrazione anche nel livello database.
+- Dopo ogni scrittura vengono svuotate le cache per ricaricare archivio, ORION e FORGE.
+- Aggiunti test sui concorsi saltati e sui numeri duplicati.
+- Versione visibile aggiornata a `2.7.4.3`; versione algoritmica invariata a `2.7.4`.
+
 ## 2.7.4.2 — Versionamento algoritmico e contatori correnti
 
 - Separata la versione dell'app (`2.7.4.2`) dalla versione algoritmica ORION (`2.7.4`).
