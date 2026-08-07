@@ -211,6 +211,10 @@ begin
 end;
 $$;
 
+revoke execute on function
+    public.invalidate_forge_predictions_on_draw_change()
+from public, anon, authenticated;
+
 drop trigger if exists trg_invalidate_forge_predictions
 on public.estrazioni;
 
