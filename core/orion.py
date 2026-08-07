@@ -27,7 +27,7 @@ class OrionPolicy:
 
     # Versione mostrata nell'interfaccia. Può cambiare per patch applicative
     # senza invalidare i modelli e gli esperimenti FORGE già persistiti.
-    version: str = "2.7.5"
+    version: str = "2.7.5.1"
     # Versione dell'algoritmo vero e proprio. Va modificata soltanto quando
     # cambiano scoring, memorie, pool, limiti o filtri della pipeline ORION.
     algorithm_version: str = "2.7.4"

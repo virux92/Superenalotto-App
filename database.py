@@ -462,17 +462,26 @@ def ensure_forge_v2_tables() -> None:
             n4 smallint not null,
             n5 smallint not null,
             n6 smallint not null,
+            predicted_superstar smallint null check (predicted_superstar between 1 and 90),
             status text not null default 'pending'
                 check (status in ('pending', 'evaluated', 'void')),
             target_year integer null,
             target_contest integer null,
             target_date date null,
             hits smallint null,
+            target_superstar smallint null check (target_superstar between 1 and 90),
+            superstar_hit boolean null,
             created_at timestamptz not null default now(),
             evaluated_at timestamptz null,
             constraint forge_predictions_numbers_ordered
                 check (n1 < n2 and n2 < n3 and n3 < n4 and n4 < n5 and n5 < n6)
         )
+        """,
+        """
+        alter table public.forge_predictions
+            add column if not exists predicted_superstar smallint null,
+            add column if not exists target_superstar smallint null,
+            add column if not exists superstar_hit boolean null
         """,
         """
         create index if not exists forge_predictions_pending_idx
@@ -509,6 +518,9 @@ def ensure_forge_v2_tables() -> None:
         declare
             cutoff_date date;
             previous_max date;
+            numbers_changed boolean;
+            superstar_changed boolean;
+            structure_changed boolean;
         begin
             if tg_op = 'INSERT' then
                 select max(data_estrazione)
@@ -520,21 +532,81 @@ def ensure_forge_v2_tables() -> None:
                     return new;
                 end if;
                 cutoff_date := new.data_estrazione;
-            elsif tg_op = 'UPDATE' then
-                if row(
-                    old.data_estrazione, old.concorso,
-                    old.n1, old.n2, old.n3, old.n4, old.n5, old.n6,
-                    old.jolly, old.superstar
-                ) is not distinct from row(
-                    new.data_estrazione, new.concorso,
-                    new.n1, new.n2, new.n3, new.n4, new.n5, new.n6,
-                    new.jolly, new.superstar
-                ) then
+            elsif tg_op = 'DELETE' then
+                cutoff_date := old.data_estrazione;
+            else
+                structure_changed := row(
+                    old.data_estrazione, old.anno, old.concorso
+                ) is distinct from row(
+                    new.data_estrazione, new.anno, new.concorso
+                );
+                numbers_changed := row(
+                    old.n1, old.n2, old.n3, old.n4, old.n5, old.n6
+                ) is distinct from row(
+                    new.n1, new.n2, new.n3, new.n4, new.n5, new.n6
+                );
+                superstar_changed := old.superstar is distinct from new.superstar;
+
+                if structure_changed then
+                    cutoff_date := least(old.data_estrazione, new.data_estrazione);
+                else
+                    -- Jolly e campi non predittivi non toccano FORGE.
+                    if not numbers_changed and not superstar_changed then
+                        return new;
+                    end if;
+
+                    if numbers_changed then
+                        update public.forge_predictions as prediction
+                        set target_year = new.anno,
+                            target_contest = new.concorso,
+                            target_date = new.data_estrazione,
+                            hits = (
+                                case when prediction.n1 in (new.n1, new.n2, new.n3, new.n4, new.n5, new.n6) then 1 else 0 end
+                                + case when prediction.n2 in (new.n1, new.n2, new.n3, new.n4, new.n5, new.n6) then 1 else 0 end
+                                + case when prediction.n3 in (new.n1, new.n2, new.n3, new.n4, new.n5, new.n6) then 1 else 0 end
+                                + case when prediction.n4 in (new.n1, new.n2, new.n3, new.n4, new.n5, new.n6) then 1 else 0 end
+                                + case when prediction.n5 in (new.n1, new.n2, new.n3, new.n4, new.n5, new.n6) then 1 else 0 end
+                                + case when prediction.n6 in (new.n1, new.n2, new.n3, new.n4, new.n5, new.n6) then 1 else 0 end
+                            )::smallint,
+                            target_superstar = new.superstar,
+                            superstar_hit = case
+                                when prediction.predicted_superstar is null
+                                     or new.superstar is null then null
+                                else prediction.predicted_superstar = new.superstar
+                            end,
+                            evaluated_at = now()
+                        where prediction.status = 'evaluated'
+                          and prediction.target_year = old.anno
+                          and prediction.target_contest = old.concorso;
+                    else
+                        update public.forge_predictions as prediction
+                        set target_superstar = new.superstar,
+                            superstar_hit = case
+                                when prediction.predicted_superstar is null
+                                     or new.superstar is null then null
+                                else prediction.predicted_superstar = new.superstar
+                            end
+                        where prediction.status = 'evaluated'
+                          and prediction.target_year = old.anno
+                          and prediction.target_contest = old.concorso;
+                    end if;
+
+                    -- Le sole previsioni ancora future dipendenti dal dato
+                    -- corretto vengono conservate per audit come void.
+                    update public.forge_predictions
+                    set status = 'void',
+                        target_year = null,
+                        target_contest = null,
+                        target_date = null,
+                        hits = null,
+                        target_superstar = null,
+                        superstar_hit = null,
+                        evaluated_at = null
+                    where status = 'pending'
+                      and source_date >= new.data_estrazione;
+
                     return new;
                 end if;
-                cutoff_date := least(old.data_estrazione, new.data_estrazione);
-            else
-                cutoff_date := old.data_estrazione;
             end if;
 
             update public.forge_predictions
@@ -543,6 +615,8 @@ def ensure_forge_v2_tables() -> None:
                 target_contest = null,
                 target_date = null,
                 hits = null,
+                target_superstar = null,
+                superstar_hit = null,
                 evaluated_at = null
             where status in ('pending', 'evaluated')
               and (
@@ -698,40 +772,63 @@ def save_forge_prediction(record: Mapping[str, object]) -> dict[str, object]:
     numbers = tuple(sorted(int(value) for value in record["numbers"]))
     if len(numbers) != 6 or len(set(numbers)) != 6:
         raise ValueError("La previsione FORGE deve contenere sei numeri distinti.")
-    query = """
-        insert into public.forge_predictions (
-            prediction_key, archive_signature, forge_version,
-            source_year, source_contest, source_date,
-            role, model_id, model_config,
-            n1, n2, n3, n4, n5, n6
-        ) values (
-            %(prediction_key)s, %(archive_signature)s, %(forge_version)s,
-            %(source_year)s, %(source_contest)s, %(source_date)s,
-            %(role)s, %(model_id)s, %(model_config)s::jsonb,
-            %(n1)s, %(n2)s, %(n3)s, %(n4)s, %(n5)s, %(n6)s
-        )
-        on conflict (prediction_key) do update set
-            archive_signature = excluded.archive_signature,
-            forge_version = excluded.forge_version,
-            source_year = excluded.source_year,
-            source_contest = excluded.source_contest,
-            source_date = excluded.source_date,
-            role = excluded.role,
-            model_id = excluded.model_id,
-            model_config = excluded.model_config,
-            n1 = excluded.n1,
-            n2 = excluded.n2,
-            n3 = excluded.n3,
-            n4 = excluded.n4,
-            n5 = excluded.n5,
-            n6 = excluded.n6,
+    predicted_superstar = record.get("predicted_superstar")
+    if predicted_superstar is not None:
+        predicted_superstar = int(predicted_superstar)
+        if not 1 <= predicted_superstar <= 90:
+            raise ValueError("Il SuperStar previsto deve essere compreso tra 1 e 90.")
+    reactivate_query = """
+        update public.forge_predictions as prediction
+        set archive_signature = %(archive_signature)s,
+            forge_version = %(forge_version)s,
+            source_year = %(source_year)s,
+            source_contest = %(source_contest)s,
+            source_date = %(source_date)s,
+            role = %(role)s,
+            model_id = %(model_id)s,
+            model_config = %(model_config)s::jsonb,
+            n1 = %(n1)s,
+            n2 = %(n2)s,
+            n3 = %(n3)s,
+            n4 = %(n4)s,
+            n5 = %(n5)s,
+            n6 = %(n6)s,
+            predicted_superstar = %(predicted_superstar)s,
             status = 'pending',
             target_year = null,
             target_contest = null,
             target_date = null,
             hits = null,
+            target_superstar = null,
+            superstar_hit = null,
             evaluated_at = null
-        where public.forge_predictions.status = 'void'
+        where prediction.prediction_key = %(prediction_key)s
+          and prediction.status = 'void'
+          and not exists (
+              select 1
+              from public.forge_predictions as active
+              where active.status = 'pending'
+                and active.forge_version = %(forge_version)s
+                and active.source_year = %(source_year)s
+                and active.source_contest = %(source_contest)s
+                and active.role = %(role)s
+          )
+        returning prediction_key
+    """
+    insert_query = """
+        insert into public.forge_predictions (
+            prediction_key, archive_signature, forge_version,
+            source_year, source_contest, source_date,
+            role, model_id, model_config,
+            n1, n2, n3, n4, n5, n6, predicted_superstar
+        ) values (
+            %(prediction_key)s, %(archive_signature)s, %(forge_version)s,
+            %(source_year)s, %(source_contest)s, %(source_date)s,
+            %(role)s, %(model_id)s, %(model_config)s::jsonb,
+            %(n1)s, %(n2)s, %(n3)s, %(n4)s, %(n5)s, %(n6)s,
+            %(predicted_superstar)s
+        )
+        on conflict do nothing
         returning prediction_key
     """
     payload: dict[str, object] = {
@@ -746,12 +843,16 @@ def save_forge_prediction(record: Mapping[str, object]) -> dict[str, object]:
         "model_config": json.dumps(
             record.get("model_config", {}), ensure_ascii=False, default=str
         ),
+        "predicted_superstar": predicted_superstar,
     }
     payload.update({f"n{index}": numbers[index - 1] for index in range(1, 7)})
     with get_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(query, payload)
+            cursor.execute(reactivate_query, payload)
             saved = cursor.fetchone()
+            if saved is None:
+                cursor.execute(insert_query, payload)
+                saved = cursor.fetchone()
         connection.commit()
     return {
         "prediction_key": (
@@ -772,7 +873,8 @@ def fetch_pending_forge_predictions(
                 select prediction_key, archive_signature, forge_version,
                        source_year, source_contest, source_date,
                        role, model_id, model_config,
-                       n1, n2, n3, n4, n5, n6, status, created_at
+                       n1, n2, n3, n4, n5, n6, predicted_superstar,
+                       status, created_at
                 from public.forge_predictions
                 where status = 'pending' and forge_version = %s
                 order by source_date, created_at
@@ -799,6 +901,8 @@ def void_obsolete_pending_forge_predictions(
             target_contest = null,
             target_date = null,
             hits = null,
+            target_superstar = null,
+            superstar_hit = null,
             evaluated_at = null
         where status = 'pending'
           and forge_version = %s
@@ -830,6 +934,8 @@ def evaluate_forge_prediction(
     target_contest: int,
     target_date: object,
     hits: int,
+    target_superstar: int | None,
+    superstar_hit: bool | None,
 ) -> dict[str, str]:
     ensure_forge_v2_tables()
     query = """
@@ -839,6 +945,8 @@ def evaluate_forge_prediction(
             target_contest = %s,
             target_date = %s,
             hits = %s,
+            target_superstar = %s,
+            superstar_hit = %s,
             evaluated_at = now()
         where prediction_key = %s and status = 'pending'
         returning prediction_key
@@ -852,6 +960,8 @@ def evaluate_forge_prediction(
                     int(target_contest),
                     target_date,
                     int(hits),
+                    None if target_superstar is None else int(target_superstar),
+                    superstar_hit,
                     str(prediction_key),
                 ),
             )
@@ -872,6 +982,7 @@ def fetch_evaluated_forge_predictions(
                        role, model_id,
                        source_year, source_contest, source_date,
                        target_year, target_contest, target_date, hits,
+                       predicted_superstar, target_superstar, superstar_hit,
                        model_config, evaluated_at
                 from public.forge_predictions
                 where status = 'evaluated' and forge_version = %s

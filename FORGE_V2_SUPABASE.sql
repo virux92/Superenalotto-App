@@ -1,4 +1,4 @@
--- ORION v2.7.5 / FORGE 2
+-- ORION v2.7.5.1 / FORGE 2
 -- Memoria persistente champion/challenger e protezioni di integrità.
 -- L'app tenta di applicare automaticamente queste definizioni.
 -- Eseguire manualmente in Supabase SQL Editor soltanto se l'interfaccia
@@ -49,17 +49,25 @@ create table if not exists public.forge_predictions (
     n4 smallint not null,
     n5 smallint not null,
     n6 smallint not null,
+    predicted_superstar smallint null check (predicted_superstar between 1 and 90),
     status text not null default 'pending'
         check (status in ('pending', 'evaluated', 'void')),
     target_year integer null,
     target_contest integer null,
     target_date date null,
     hits smallint null,
+    target_superstar smallint null check (target_superstar between 1 and 90),
+    superstar_hit boolean null,
     created_at timestamptz not null default now(),
     evaluated_at timestamptz null,
     constraint forge_predictions_numbers_ordered
         check (n1 < n2 and n2 < n3 and n3 < n4 and n4 < n5 and n5 < n6)
 );
+
+alter table public.forge_predictions
+    add column if not exists predicted_superstar smallint null,
+    add column if not exists target_superstar smallint null,
+    add column if not exists superstar_hit boolean null;
 
 create index if not exists forge_predictions_pending_idx
     on public.forge_predictions (status, source_date, role, model_id);
@@ -90,6 +98,9 @@ as $$
 declare
     cutoff_date date;
     previous_max date;
+    numbers_changed boolean;
+    superstar_changed boolean;
+    structure_changed boolean;
 begin
     if tg_op = 'INSERT' then
         select max(data_estrazione)
@@ -101,21 +112,81 @@ begin
             return new;
         end if;
         cutoff_date := new.data_estrazione;
-    elsif tg_op = 'UPDATE' then
-        if row(
-            old.data_estrazione, old.concorso,
-            old.n1, old.n2, old.n3, old.n4, old.n5, old.n6,
-            old.jolly, old.superstar
-        ) is not distinct from row(
-            new.data_estrazione, new.concorso,
-            new.n1, new.n2, new.n3, new.n4, new.n5, new.n6,
-            new.jolly, new.superstar
-        ) then
+    elsif tg_op = 'DELETE' then
+        cutoff_date := old.data_estrazione;
+    else
+        structure_changed := row(
+            old.data_estrazione, old.anno, old.concorso
+        ) is distinct from row(
+            new.data_estrazione, new.anno, new.concorso
+        );
+        numbers_changed := row(
+            old.n1, old.n2, old.n3, old.n4, old.n5, old.n6
+        ) is distinct from row(
+            new.n1, new.n2, new.n3, new.n4, new.n5, new.n6
+        );
+        superstar_changed := old.superstar is distinct from new.superstar;
+
+        if structure_changed then
+            cutoff_date := least(old.data_estrazione, new.data_estrazione);
+        else
+            -- Jolly e campi non predittivi non toccano FORGE.
+            if not numbers_changed and not superstar_changed then
+                return new;
+            end if;
+
+            if numbers_changed then
+                update public.forge_predictions as prediction
+                set target_year = new.anno,
+                    target_contest = new.concorso,
+                    target_date = new.data_estrazione,
+                    hits = (
+                        case when prediction.n1 in (new.n1, new.n2, new.n3, new.n4, new.n5, new.n6) then 1 else 0 end
+                        + case when prediction.n2 in (new.n1, new.n2, new.n3, new.n4, new.n5, new.n6) then 1 else 0 end
+                        + case when prediction.n3 in (new.n1, new.n2, new.n3, new.n4, new.n5, new.n6) then 1 else 0 end
+                        + case when prediction.n4 in (new.n1, new.n2, new.n3, new.n4, new.n5, new.n6) then 1 else 0 end
+                        + case when prediction.n5 in (new.n1, new.n2, new.n3, new.n4, new.n5, new.n6) then 1 else 0 end
+                        + case when prediction.n6 in (new.n1, new.n2, new.n3, new.n4, new.n5, new.n6) then 1 else 0 end
+                    )::smallint,
+                    target_superstar = new.superstar,
+                    superstar_hit = case
+                        when prediction.predicted_superstar is null
+                             or new.superstar is null then null
+                        else prediction.predicted_superstar = new.superstar
+                    end,
+                    evaluated_at = now()
+                where prediction.status = 'evaluated'
+                  and prediction.target_year = old.anno
+                  and prediction.target_contest = old.concorso;
+            else
+                update public.forge_predictions as prediction
+                set target_superstar = new.superstar,
+                    superstar_hit = case
+                        when prediction.predicted_superstar is null
+                             or new.superstar is null then null
+                        else prediction.predicted_superstar = new.superstar
+                    end
+                where prediction.status = 'evaluated'
+                  and prediction.target_year = old.anno
+                  and prediction.target_contest = old.concorso;
+            end if;
+
+            -- Le sole previsioni ancora future dipendenti dal dato corretto
+            -- vengono conservate per audit come void.
+            update public.forge_predictions
+            set status = 'void',
+                target_year = null,
+                target_contest = null,
+                target_date = null,
+                hits = null,
+                target_superstar = null,
+                superstar_hit = null,
+                evaluated_at = null
+            where status = 'pending'
+              and source_date >= new.data_estrazione;
+
             return new;
         end if;
-        cutoff_date := least(old.data_estrazione, new.data_estrazione);
-    else
-        cutoff_date := old.data_estrazione;
     end if;
 
     update public.forge_predictions
@@ -124,6 +195,8 @@ begin
         target_contest = null,
         target_date = null,
         hits = null,
+        target_superstar = null,
+        superstar_hit = null,
         evaluated_at = null
     where status in ('pending', 'evaluated')
       and (

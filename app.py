@@ -40,7 +40,7 @@ from ui.orion_ui import (
     render_number_balls,
 )
 
-APP_TITLE = "ORION v2.7.5 — SuperEnalotto Quant Engine"
+APP_TITLE = "ORION v2.7.5.1 — SuperEnalotto Quant Engine"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🌌", layout="wide")
@@ -1014,6 +1014,7 @@ def render_settings_view(
                 "previsioni_annullate_ora": forge.get("predictions_voided_now"),
                 "previsioni_salvate_ora": forge.get("predictions_saved_now"),
                 "valutazione_prospettica": forge.get("prospective"),
+                "superstar": forge.get("superstar"),
                 "esperimenti_saltati_perche_gia_noti": forge.get("skipped_known"),
             }
         )
