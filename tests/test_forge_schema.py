@@ -109,6 +109,10 @@ def test_forge_setup_is_repeatable_and_contains_idempotent_superstar_upgrade() -
     assert "add column if not exists target_superstar" in first_run_sql
     assert "add column if not exists superstar_hit" in first_run_sql
     assert "create or replace function public.invalidate_forge_predictions_on_draw_change" in first_run_sql
+    assert (
+        "public.invalidate_forge_predictions_on_draw_change()\n        from public, anon, authenticated"
+        in first_run_sql
+    )
     assert "drop trigger if exists trg_invalidate_forge_predictions" in first_run_sql
 
 
@@ -136,6 +140,12 @@ def test_install_sql_distinguishes_draw_change_types_and_preserves_evaluated_row
     assert "source_date >= new.data_estrazione" in function_sql
     assert "target_superstar = new.superstar" in function_sql
     assert "superstar_hit = case" in function_sql
+    assert (
+        "revoke execute on function\n"
+        "    public.invalidate_forge_predictions_on_draw_change()\n"
+        "from public, anon, authenticated"
+        in sql
+    )
 
     statements: list[str] = []
     setup = getattr(
@@ -156,7 +166,7 @@ def test_install_sql_distinguishes_draw_change_types_and_preserves_evaluated_row
     )
     standalone_function = (
         "create or replace function public.invalidate_forge_predictions_on_draw_change()"
-        + function_sql.split("drop trigger if exists", maxsplit=1)[0]
+        + function_sql.split("revoke execute on function", maxsplit=1)[0]
     )
     def normalize(value: str) -> str:
         without_comments = "\n".join(
