@@ -21,10 +21,18 @@ from core.forge import (
     experiment_key,
     weights_from_record,
 )
+from core.metrics import calculate_superstar_ranking
 from core.orion import DEFAULT_POLICY, generate_orion_proposal
 from services.draw_service import dataframe_to_history
 
 REGISTRY_FILE = Path(__file__).resolve().parents[1] / ".forge_registry_v2.json"
+
+
+def _archive_columns_signature(archive: pd.DataFrame, columns: list[str]) -> str:
+    canonical = archive.sort_values(["data", "anno", "concorso"])[columns].copy()
+    canonical["data"] = pd.to_datetime(canonical["data"]).dt.strftime("%Y-%m-%d")
+    payload = canonical.to_csv(index=False, lineterminator="\n").encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def main_numbers_signature(archive: pd.DataFrame) -> str:
@@ -33,10 +41,24 @@ def main_numbers_signature(archive: pd.DataFrame) -> str:
     Jolly e SuperStar non invalidano più inutilmente tutti i backtest FORGE.
     """
     columns = ["data", "anno", "concorso", "n1", "n2", "n3", "n4", "n5", "n6"]
-    canonical = archive.sort_values(["data", "anno", "concorso"])[columns].copy()
-    canonical["data"] = pd.to_datetime(canonical["data"]).dt.strftime("%Y-%m-%d")
-    payload = canonical.to_csv(index=False, lineterminator="\n").encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+    return _archive_columns_signature(archive, columns)
+
+
+def prediction_inputs_signature(archive: pd.DataFrame) -> str:
+    """Firma gli input congelati delle previsioni, escluso il Jolly non usato."""
+    columns = [
+        "data",
+        "anno",
+        "concorso",
+        "n1",
+        "n2",
+        "n3",
+        "n4",
+        "n5",
+        "n6",
+        "superstar",
+    ]
+    return _archive_columns_signature(archive, columns)
 
 
 def _read_local_registry() -> dict[str, dict[str, Any]]:
@@ -137,16 +159,24 @@ def _evaluate_pending_predictions(archive: pd.DataFrame) -> tuple[int, str | Non
 
             target = future.iloc[0]
             extracted = {int(target[f"n{index}"]) for index in range(1, 7)}
+            target_superstar = int(target["superstar"])
             for prediction in rows:
                 predicted = {
                     int(prediction[f"n{index}"]) for index in range(1, 7)
                 }
+                predicted_superstar = prediction.get("predicted_superstar")
                 result = evaluate_forge_prediction(
                     str(prediction["prediction_key"]),
                     target_year=int(target["anno"]),
                     target_contest=int(target["concorso"]),
                     target_date=pd.Timestamp(target["data"]).date(),
                     hits=len(predicted & extracted),
+                    target_superstar=target_superstar,
+                    superstar_hit=(
+                        None
+                        if predicted_superstar is None
+                        else int(predicted_superstar) == target_superstar
+                    ),
                 )
                 if result:
                     evaluated += 1
@@ -190,6 +220,15 @@ def _paired_prospective_results(
             continue
         champion = values["champion"]
         challenger = values["challenger"]
+        superstar_row = next(
+            (
+                row
+                for row in (champion, challenger)
+                if row.get("predicted_superstar") is not None
+                and row.get("superstar_hit") is not None
+            ),
+            None,
+        )
         pairs.append(
             {
                 "archive_signature": signature,
@@ -197,23 +236,56 @@ def _paired_prospective_results(
                 "challenger_hits": int(challenger["hits"]),
                 "difference": int(challenger["hits"]) - int(champion["hits"]),
                 "target_date": challenger.get("target_date"),
+                # Il SuperStar e' una sola osservazione per coppia/concorso.
+                # Champion e challenger condividono normalmente lo stesso valore;
+                # il challenger e' usato solo come fallback per righe storiche parziali.
+                "predicted_superstar": (
+                    None
+                    if superstar_row is None
+                    else superstar_row.get("predicted_superstar")
+                ),
+                "target_superstar": (
+                    None
+                    if superstar_row is None
+                    else superstar_row.get("target_superstar")
+                ),
+                "superstar_hit": (
+                    None if superstar_row is None else superstar_row.get("superstar_hit")
+                ),
             }
         )
     pairs.sort(key=lambda row: str(row.get("target_date", "")))
     return pairs, None
 
 
+def _superstar_statistics(pairs: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Calcola il SuperStar per coppia prospettica, senza pesare i due ruoli."""
+    observations = [
+        bool(row["superstar_hit"])
+        for row in pairs
+        if row.get("predicted_superstar") is not None
+        and row.get("superstar_hit") is not None
+    ]
+    count = len(observations)
+    hits = sum(observations)
+    return {
+        "count": count,
+        "hits": hits,
+        "hit_rate": hits / count if count else 0.0,
+    }
+
+
 def _prospective_assessment(
     champion: Mapping[str, Any],
     challenger: Mapping[str, Any] | None,
     minimum: int,
-) -> tuple[dict[str, Any], str | None]:
+) -> tuple[dict[str, Any], dict[str, Any], str | None]:
     if not challenger:
         return {
             "count": 0,
             "minimum": int(minimum),
             "decision": "waiting_challenger",
-        }, None
+        }, _superstar_statistics(()), None
 
     pairs, error = _paired_prospective_results(
         str(champion["model_id"]), str(challenger["model_id"])
@@ -223,7 +295,7 @@ def _prospective_assessment(
             "count": 0,
             "minimum": int(minimum),
             "decision": "persistence_error",
-        }, error
+        }, _superstar_statistics(()), error
 
     differences = [float(row["difference"]) for row in pairs]
     ci_min, ci_max = paired_bootstrap_ci(differences, seed=2740)
@@ -258,7 +330,7 @@ def _prospective_assessment(
         "challenger_mean": mean(challenger_hits) if challenger_hits else 0.0,
         "champion_2_plus": sum(value >= 2 for value in champion_hits),
         "challenger_2_plus": sum(value >= 2 for value in challenger_hits),
-    }, None
+    }, _superstar_statistics(pairs), None
 
 
 def _prediction_key(
@@ -273,6 +345,7 @@ def _prediction_key(
 def _void_obsolete_current_predictions(
     archive: pd.DataFrame,
     archive_signature: str,
+    prediction_signature: str,
     champion: Mapping[str, Any],
     challenger: Mapping[str, Any] | None,
 ) -> tuple[int, str | None]:
@@ -284,20 +357,19 @@ def _void_obsolete_current_predictions(
 
     latest = archive.sort_values(["data", "anno", "concorso"]).iloc[-1]
     try:
+        signatures = tuple(dict.fromkeys((archive_signature, prediction_signature)))
         keep_prediction_keys = [
-            _prediction_key(
-                archive_signature,
-                "champion",
-                str(champion["model_id"]),
-            )
+            _prediction_key(signature, "champion", str(champion["model_id"]))
+            for signature in signatures
         ]
         if challenger:
-            keep_prediction_keys.append(
+            keep_prediction_keys.extend(
                 _prediction_key(
-                    archive_signature,
+                    signature,
                     "challenger",
                     str(challenger["model_id"]),
                 )
+                for signature in signatures
             )
         rows = void_obsolete_pending_forge_predictions(
             forge_version=FORGE_VERSION,
@@ -313,6 +385,7 @@ def _void_obsolete_current_predictions(
 def _save_current_predictions(
     archive: pd.DataFrame,
     archive_signature: str,
+    prediction_signature: str,
     champion: Mapping[str, Any],
     challenger: Mapping[str, Any] | None,
 ) -> tuple[int, str | None]:
@@ -322,6 +395,7 @@ def _save_current_predictions(
         return 0, f"{type(exc).__name__}: {exc}"
 
     history = dataframe_to_history(archive)
+    predicted_superstar = int(calculate_superstar_ranking(history)[0][0])
     latest = archive.sort_values(["data", "anno", "concorso"]).iloc[-1]
     models: list[tuple[str, Mapping[str, Any]]] = [("champion", champion)]
     if challenger:
@@ -338,7 +412,7 @@ def _save_current_predictions(
             result = save_forge_prediction(
                 {
                     "prediction_key": _prediction_key(
-                        archive_signature, role, str(model["model_id"])
+                        prediction_signature, role, str(model["model_id"])
                     ),
                     "archive_signature": archive_signature,
                     "forge_version": FORGE_VERSION,
@@ -349,6 +423,7 @@ def _save_current_predictions(
                     "model_id": str(model["model_id"]),
                     "model_config": model.get("configuration", {}),
                     "numbers": tuple(proposal["primary"]),
+                    "predicted_superstar": predicted_superstar,
                 }
             )
             if bool(result.get("inserted")):
@@ -379,6 +454,7 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
     previsioni prospettiche registrate su Supabase prima delle estrazioni.
     """
     archive_signature = main_numbers_signature(archive)
+    prediction_signature = prediction_inputs_signature(archive)
     models = build_candidate_models(len(archive))
     model_by_label = {model.label: model for model in models}
 
@@ -541,12 +617,13 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
         "minimum": prospective_minimum,
         "decision": "persistence_unavailable" if not persistence_ok else "collecting",
     }
+    superstar = _superstar_statistics(())
 
     if persistence_ok:
         evaluated_now, evaluation_error = _evaluate_pending_predictions(archive)
         if evaluation_error:
             save_errors.append(evaluation_error)
-        prospective, assessment_error = _prospective_assessment(
+        prospective, superstar, assessment_error = _prospective_assessment(
             champion,
             challenger,
             prospective_minimum,
@@ -588,6 +665,7 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
         predictions_voided, void_error = _void_obsolete_current_predictions(
             archive,
             archive_signature,
+            prediction_signature,
             champion,
             challenger,
         )
@@ -597,6 +675,7 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
         predictions_saved, prediction_error = _save_current_predictions(
             archive,
             archive_signature,
+            prediction_signature,
             champion,
             challenger,
         )
@@ -632,4 +711,5 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
         "predictions_voided_now": predictions_voided,
         "predictions_saved_now": predictions_saved,
         "prospective": prospective,
+        "superstar": superstar,
     }

@@ -1,10 +1,17 @@
 # ORION — SuperEnalotto Quant Engine
 
-Versione **2.7.5**.
+Versione **2.7.5.1**.
 
 ORION è un motore statistico multi-memoria con interfaccia Streamlit. FORGE 2 lavora dietro le quinte in modalità **champion/challenger**: il profilo bilanciato resta attivo, mentre un challenger viene osservato senza influenzare le schedine live finché non supera una verifica prospettica su estrazioni future.
 
-## Cosa cambia nella 2.7.5
+## Cosa cambia nella 2.7.5.1
+
+- Il SuperStar previsto viene congelato con ogni previsione FORGE e valutato separatamente, senza influire sul confronto champion/challenger.
+- Le correzioni di sestina rivalutano i target gia' osservati e invalidano soltanto le previsioni future dipendenti dal dato errato.
+- Le correzioni del solo Jolly non modificano FORGE; le correzioni del SuperStar aggiornano la metrica dedicata.
+- Lo schema FORGE e' aggiornabile in modo idempotente anche se le colonne SuperStar esistono gia'.
+
+## Correzioni precedenti (2.7.5)
 
 - Rimosso il caching Streamlit dal ciclo FORGE che legge e scrive Supabase: valutazioni, invalidazioni e salvataggi vengono eseguiti a ogni ciclo reale dell'app.
 - Le previsioni pendenti vengono filtrate per versione FORGE.

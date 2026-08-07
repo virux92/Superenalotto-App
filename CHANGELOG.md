@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.7.5.1 — Correzioni prospettiche e SuperStar FORGE
+
+- Persistito il SuperStar calcolato al momento della previsione e valutato senza alterare scoring o promozioni.
+- Le statistiche SuperStar contano una sola osservazione per coppia/concorso e ignorano le righe storiche senza previsione congelata.
+- Le correzioni di sestina rivalutano le previsioni gia' osservate e mettono a `void` soltanto il futuro dipendente.
+- Le correzioni del solo Jolly non modificano FORGE; quelle del SuperStar non alterano gli hit della sestina.
+- Setup Supabase idempotente per database esistenti e installazioni nuove.
+- Versione visibile `2.7.5.1`; algoritmo ORION e FORGE invariati rispettivamente a `2.7.4` e `2.0.0`.
+
 ## 2.7.5 — Consolidamento FORGE e integrità prospettica
 
 - Eliminata la cache di un'ora dal ciclo FORGE con effetti collaterali su Supabase.
