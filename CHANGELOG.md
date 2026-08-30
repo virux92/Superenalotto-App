@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.7.6 — FORGE 3 e portafoglio diversificato
+
+- ORION resta invariato alla versione algoritmica `2.7.4` e continua a essere il champion protetto.
+- Sostituiti i challenger ridondanti a soli pesi con Bayes-Dirichlet, multi-EMA, coppie con shrinkage, frequenza mobile e controllo uniforme deterministico.
+- Aggiunto backtest walk-forward annidato; soltanto il candidato selezionato sullo sviluppo viene misurato sull'holdout.
+- Aggiunto un laboratorio SuperStar indipendente con champion legacy, Bayes, finestra mobile 30, multi-EMA e controllo uniforme.
+- Le 1.168 estrazioni del CSV partecipano al backtest storico SuperStar; la promozione resta riservata a un minimo di 100 osservazioni prospettiche reali.
+- Aggiunte tabelle, trigger, RLS, revoche e backfill temporale idempotente in `FORGE_V3_SUPABASE.sql`.
+- Il sistema compatto usa CP-SAT con fallback greedy; copertura e sovrapposizione sono esposte nell'interfaccia.
+- I sistemi con SuperStar diversificano il valore tra le righe invece di ripetere sempre il primo numero del ranking.
+- Sul live completo di 1.189 estrazioni, Multi-EMA sestina chiude l'holdout a +0,025 punti medi rispetto a ORION (IC95 −0,125/+0,175); Bayes SuperStar chiude 2/100 come il champion (p = 0,305 contro uniforme). Nessuna promozione.
+- Suite: 68 test superati.
+
 ## 2.7.5.2 — Integrità temporale prospettica
 
 - Bloccati inserimenti e correzioni con data futura nell'app e direttamente in PostgreSQL.

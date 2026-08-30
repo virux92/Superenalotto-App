@@ -19,9 +19,11 @@ from core.forge import (
     default_champion_record,
     evaluate_validation_record,
     experiment_key,
+    model_spec_from_record,
     weights_from_record,
 )
 from core.metrics import calculate_superstar_ranking
+from core.number_models import generate_number_forecast
 from core.orion import DEFAULT_POLICY, generate_orion_proposal
 from services.draw_service import dataframe_to_history
 
@@ -434,11 +436,20 @@ def _save_current_predictions(
     saved = 0
     try:
         for role, model in models:
-            proposal = generate_orion_proposal(
-                history,
-                metric_weights=weights_from_record(model),
-                policy=DEFAULT_POLICY,
-            )
+            if str(model.get("model_id")) == "ORION-BALANCED":
+                numbers = tuple(
+                    generate_orion_proposal(
+                        history,
+                        metric_weights=weights_from_record(model),
+                        policy=DEFAULT_POLICY,
+                    )["primary"]
+                )
+            else:
+                numbers = tuple(
+                    generate_number_forecast(
+                        history, model_spec_from_record(model)
+                    ).numbers
+                )
             result = save_forge_prediction(
                 {
                     "prediction_key": _prediction_key(
@@ -452,7 +463,7 @@ def _save_current_predictions(
                     "role": role,
                     "model_id": str(model["model_id"]),
                     "model_config": model.get("configuration", {}),
-                    "numbers": tuple(proposal["primary"]),
+                    "numbers": numbers,
                     "predicted_superstar": predicted_superstar,
                 }
             )
@@ -477,7 +488,7 @@ def _records_for_current_candidates(
 
 
 def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
-    """Esegue FORGE 2 in modalità champion/challenger persistente.
+    """Esegue FORGE 3 in modalità champion/challenger persistente.
 
     Il backtest retrospettivo sceglie soltanto un challenger da osservare. La
     promozione del modello live può avvenire esclusivamente dopo un campione di
@@ -512,7 +523,7 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
         try:
             suite = run_nested_orion_validation(
                 records_tuple(archive),
-                [model.as_strategy_profile() for model in models],
+                [model.as_model_spec() for model in models],
                 development_limit=40,
                 holdout_limit=40,
                 random_seed=20260726,
@@ -717,6 +728,20 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
         persistence_ok = False
 
     state = mode if persistence_ok else "fallback"
+    try:
+        from services.superstar_forge_service import build_superstar_forge_snapshot
+
+        superstar_lab = build_superstar_forge_snapshot(archive)
+    except Exception as exc:
+        superstar_lab = {
+            "engine": "FORGE-SUPERSTAR",
+            "persistence_ok": False,
+            "persistence_error": f"{type(exc).__name__}: {exc}",
+            "ranking": calculate_superstar_ranking(dataframe_to_history(archive)),
+            "predicted": int(
+                calculate_superstar_ranking(dataframe_to_history(archive))[0][0]
+            ),
+        }
     return {
         "engine": "FORGE",
         "version": FORGE_VERSION,
@@ -742,4 +767,5 @@ def build_forge_snapshot(archive: pd.DataFrame) -> dict[str, Any]:
         "predictions_saved_now": predictions_saved,
         "prospective": prospective,
         "superstar": superstar,
+        "superstar_lab": superstar_lab,
     }

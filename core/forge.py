@@ -2,65 +2,60 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
-from core.experiments import StrategyProfile
 from core.metrics import DEFAULT_WEIGHTS, MetricWeights
+from core.model_contracts import ModelSpec, stable_identifier
 from core.orion import DEFAULT_POLICY
 
-FORGE_VERSION = "2.0.0"
+FORGE_VERSION = "3.0.0"
 PROSPECTIVE_MINIMUM = 100
 
 
 @dataclass(frozen=True)
 class ForgeModel:
-    """Challenger deterministico valutato in shadow mode."""
+    """Challenger algoritmico deterministico valutato in shadow mode."""
 
     label: str
-    frequency_weight: float
-    delay_weight: float
-    recency_weight: float
+    family: str
+    parameters: Mapping[str, Any] = field(default_factory=dict)
+    eligible_for_promotion: bool = True
 
     @property
-    def weights(self) -> MetricWeights:
-        return MetricWeights(
-            frequency=self.frequency_weight,
-            delay=self.delay_weight,
-            recency=self.recency_weight,
-        ).normalized()
+    def name(self) -> str:
+        return self.label
+
+    @property
+    def effective_parameters(self) -> dict[str, Any]:
+        return {
+            **dict(self.parameters),
+            "_structural_policy": {
+                "algorithm_version": DEFAULT_POLICY.algorithm_version,
+                "candidate_pool": DEFAULT_POLICY.candidate_pool,
+                "candidate_limit": DEFAULT_POLICY.candidate_limit,
+            },
+        }
 
     @property
     def configuration(self) -> dict[str, Any]:
-        normalized = self.weights
         return {
             "label": self.label,
-            "frequency_weight": round(normalized.frequency, 6),
-            "delay_weight": round(normalized.delay, 6),
-            "recency_weight": round(normalized.recency, 6),
-            "orion_policy_version": DEFAULT_POLICY.algorithm_version,
-            "candidate_pool": DEFAULT_POLICY.candidate_pool,
-            "candidate_limit": DEFAULT_POLICY.candidate_limit,
-            "memories": [
-                {"name": memory.name, "size": memory.size, "weight": memory.weight}
-                for memory in DEFAULT_POLICY.memories
-            ],
+            "family": self.family,
+            "parameters": self.effective_parameters,
+            "eligible_for_promotion": self.eligible_for_promotion,
         }
 
     @property
     def model_id(self) -> str:
-        payload = json.dumps(self.configuration, sort_keys=True, separators=(",", ":"))
-        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        numeric = int(digest[:12], 16) % 1_000_000
-        return f"ORION-{numeric:06d}"
+        return stable_identifier("FORGE", self.configuration)
 
-    def as_strategy_profile(self) -> StrategyProfile:
-        normalized = self.weights
-        return StrategyProfile(
+    def as_model_spec(self) -> ModelSpec:
+        return ModelSpec(
             self.label,
-            normalized.frequency,
-            normalized.delay,
-            normalized.recency,
+            self.family,
+            self.effective_parameters,
+            self.eligible_for_promotion,
         )
 
 
@@ -72,6 +67,9 @@ def default_champion_record() -> dict[str, Any]:
         "status": "promoted",
         "configuration": {
             "label": "Profilo bilanciato protetto",
+            "family": "orion_champion",
+            "parameters": {},
+            "eligible_for_promotion": True,
             "frequency_weight": normalized.frequency,
             "delay_weight": normalized.delay,
             "recency_weight": normalized.recency,
@@ -86,17 +84,33 @@ def default_champion_record() -> dict[str, Any]:
 
 
 def build_candidate_models(history_size: int) -> tuple[ForgeModel, ...]:
-    """Crea challenger unici; nessuna finta moltiplicazione per finestre ignorate."""
+    """Crea cinque famiglie realmente diverse, incluso un controllo casuale."""
     if history_size < DEFAULT_POLICY.minimum_history:
         return ()
-    profiles = (
-        ("Frequenza controllata", 0.50, 0.20, 0.30),
-        ("Recenza controllata", 0.25, 0.20, 0.55),
-        ("Ritardo controllato", 0.25, 0.50, 0.25),
-        ("Frequenza e recenza", 0.45, 0.10, 0.45),
-        ("Ritardo e recenza", 0.15, 0.45, 0.40),
+    return (
+        ForgeModel("Bayes Dirichlet", "bayes_dirichlet", {"alpha": 1.0}),
+        ForgeModel(
+            "Multi-EMA adattiva",
+            "multi_ema",
+            {"half_lives": (12, 40, 120)},
+        ),
+        ForgeModel(
+            "Coppie con shrinkage",
+            "pair_shrink",
+            {"alpha": 1.0, "window": 200, "shrinkage": 20.0, "pair_weight": 0.18},
+        ),
+        ForgeModel(
+            "Frequenza mobile 90",
+            "rolling_frequency",
+            {"window": 90, "alpha": 1.0},
+        ),
+        ForgeModel(
+            "Controllo uniforme deterministico",
+            "uniform_hash",
+            {},
+            eligible_for_promotion=False,
+        ),
     )
-    return tuple(ForgeModel(*profile) for profile in profiles)
 
 
 def experiment_key(model: ForgeModel, archive_signature: str) -> str:
@@ -149,6 +163,7 @@ def evaluate_validation_record(
         "perdita_media_limitata": delta >= -0.05,
         "eventi_2_plus_non_collassati": challenger_two_plus >= max(0, champion_two_plus - 1),
         "promozione_consentita": False,
+        "modello_promuovibile": model.eligible_for_promotion,
     }
     shadow = all(value for key, value in checks.items() if key != "promozione_consentita")
     quality = (
@@ -202,3 +217,14 @@ def weights_from_record(record: Mapping[str, Any] | None) -> MetricWeights:
         delay=float(config.get("delay_weight", DEFAULT_WEIGHTS.delay)),
         recency=float(config.get("recency_weight", DEFAULT_WEIGHTS.recency)),
     ).normalized()
+
+
+def model_spec_from_record(record: Mapping[str, Any]) -> ModelSpec:
+    configuration = record.get("configuration", {})
+    family = str(configuration.get("family", "orion_champion"))
+    return ModelSpec(
+        label=str(configuration.get("label", record.get("label", record.get("model_id", family)))),
+        family=family,
+        parameters=dict(configuration.get("parameters", {})),
+        eligible_for_promotion=bool(configuration.get("eligible_for_promotion", True)),
+    )

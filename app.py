@@ -12,9 +12,10 @@ from core.combinations import (
     euro,
     generate_base_variant_system,
     generate_integral_system,
-    generate_reduced_system,
     system_cost,
 )
+from core.portfolio_optimizer import optimize_ticket_portfolio, portfolio_metrics
+from core.superstar_models import assign_distinct_superstars
 from database import (
     delete_draw,
     delete_recommendation,
@@ -40,7 +41,7 @@ from ui.orion_ui import (
     render_number_balls,
 )
 
-APP_TITLE = "ORION v2.7.5.2 — SuperEnalotto Quant Engine"
+APP_TITLE = "ORION v2.7.6 — SuperEnalotto Quant Engine"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🌌", layout="wide")
@@ -354,15 +355,26 @@ def render_systems_tab(
         variants: list[int] = []
 
         if system_profile == "Compatto · 8 sestine":
-            pool, lines, coverage = generate_reduced_system(scores, 12, 8)
-            method = "Compatto"
+            pool, lines, portfolio = optimize_ticket_portfolio(scores, 12, 8)
+            coverage = float(portfolio["pair_coverage"])
+            method = "Compatto ottimizzato"
         elif system_profile == "Equilibrato · 15 sestine":
             bases, variants, lines = generate_base_variant_system(scores, 2, 6)
             pool = sorted([*bases, *variants])
+            portfolio = portfolio_metrics(lines, pool)
+            portfolio["optimizer"] = "schema base/varianti"
             method = "Equilibrato"
         else:
             pool, lines = generate_integral_system(scores, 7)
+            portfolio = portfolio_metrics(lines, pool)
+            portfolio["optimizer"] = "integrale"
             method = "Integrale 7 numeri"
+
+        superstars = (
+            assign_distinct_superstars(superstar_ranking, len(lines))
+            if with_superstar
+            else []
+        )
 
         st.session_state.system_result = {
             "profile": system_profile,
@@ -372,8 +384,9 @@ def render_systems_tab(
             "variants": variants,
             "lines": lines,
             "coverage": coverage,
+            "portfolio": portfolio,
             "with_superstar": with_superstar,
-            "superstar": superstar_ranking[0][0],
+            "superstars": superstars,
         }
 
     result = st.session_state.system_result
@@ -402,18 +415,21 @@ def render_systems_tab(
         lines, columns=[f"N{index}" for index in range(1, 7)]
     )
     if result["with_superstar"]:
-        system_dataframe["SuperStar"] = int(result["superstar"])
+        system_dataframe["SuperStar"] = [int(value) for value in result["superstars"]]
     st.dataframe(system_dataframe, use_container_width=True, hide_index=True, height=480)
     st.download_button(
         "Scarica sistema CSV",
         system_dataframe.to_csv(index=False).encode("utf-8-sig"),
-        "sistema_orion_v2_7_4.csv",
+        "sistema_orion_v2_7_6.csv",
         "text/csv",
         use_container_width=True,
     )
     st.caption(
-        "Il costo mostrato dipende dal numero di sestine e dall’eventuale SuperStar. "
-        "Più sestine aumentano la copertura acquistata, non la capacità di prevedere l’estrazione."
+        f"Copertura coppie: {float(result['portfolio']['pair_coverage']):.1%} · "
+        f"sovrapposizione massima: {int(result['portfolio']['maximum_overlap'])} numeri · "
+        f"ottimizzatore: {result['portfolio']['optimizer']}. "
+        "I SuperStar sono diversificati tra le righe; più sestine aumentano la copertura "
+        "acquistata, non la probabilità intrinseca di una singola combinazione."
     )
 
 
@@ -1001,6 +1017,7 @@ def render_settings_view(
         )
 
     with st.expander("Stato tecnico di FORGE", expanded=False):
+        superstar_lab = forge.get("superstar_lab") or {}
         st.json(
             {
                 "stato": forge.get("state"),
@@ -1017,6 +1034,14 @@ def render_settings_view(
                 "previsioni_salvate_ora": forge.get("predictions_saved_now"),
                 "valutazione_prospettica": forge.get("prospective"),
                 "superstar": forge.get("superstar"),
+                "laboratorio_superstar": {
+                    "modello_attivo": superstar_lab.get("active_model"),
+                    "challenger": superstar_lab.get("challenger_model"),
+                    "backtest_storico": superstar_lab.get("historical_validation"),
+                    "valutazione_prospettica": superstar_lab.get("prospective"),
+                    "persistenza_ok": superstar_lab.get("persistence_ok"),
+                    "errore_persistenza": superstar_lab.get("persistence_error"),
+                },
                 "esperimenti_saltati_perche_gia_noti": forge.get("skipped_known"),
             }
         )
