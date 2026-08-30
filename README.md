@@ -1,10 +1,22 @@
 # ORION — SuperEnalotto Quant Engine
 
-Versione **2.7.5.2**.
+Versione **2.7.6**.
 
-ORION è un motore statistico multi-memoria con interfaccia Streamlit. FORGE 2 lavora dietro le quinte in modalità **champion/challenger**: il profilo bilanciato resta attivo, mentre un challenger viene osservato senza influenzare le schedine live finché non supera una verifica prospettica su estrazioni future.
+ORION è un motore statistico multi-memoria con interfaccia Streamlit. FORGE 3 lavora dietro le quinte in modalità **champion/challenger**: ORION 2.7.4 resta il champion protetto, mentre famiglie algoritmiche differenti vengono osservate senza influenzare le schedine live finché non superano una verifica prospettica su estrazioni future.
 
-## Cosa cambia nella 2.7.5.2
+## Cosa cambia nella 2.7.6
+
+- FORGE confronta cinque famiglie per la sestina: Bayes-Dirichlet, multi-EMA, coppie con shrinkage, frequenza mobile e un controllo uniforme deterministico.
+- Il backtest resta walk-forward con sviluppo e holdout; nessun risultato storico può promuovere un modello.
+- ORION, pesi e scoring restano byte-per-byte invariati finché un challenger non supera almeno 100 confronti prospettici appaiati.
+- Il SuperStar ha un ciclo champion/challenger e tabelle separate. Tutte le 1.168 estrazioni del CSV sono usate nel backtest storico; le osservazioni prospettiche richiedono comunque una previsione realmente congelata prima del target.
+- Il portafoglio compatto usa CP-SAT, con fallback greedy deterministico, e mostra copertura e sovrapposizione.
+- Nei sistemi ogni riga riceve un SuperStar distinto finché il ranking contiene valori disponibili; la proposta singola continua a mostrare il champion.
+- La migrazione `FORGE_V3_SUPABASE.sql` è additiva, idempotente, protetta da RLS e recupera soltanto vecchie osservazioni SuperStar temporalmente valide.
+- Sul live completo di 1.189 estrazioni, Multi-EMA sestina chiude l'holdout a +0,025 punti medi ma con IC95 −0,125/+0,175; Bayes SuperStar fa 2/100 come il champion. I dati non autorizzano alcuna promozione.
+- Suite: 68 test superati.
+
+## Correzioni precedenti (2.7.5.2)
 
 - Le date future sono rifiutate sia dall'interfaccia sia da un trigger PostgreSQL, anche per scritture che non passano dall'app.
 - Una previsione entra nel campione prospettico soltanto se `created_at` precede le ore 20:00 italiane del giorno target.
@@ -53,6 +65,9 @@ FORGE crea automaticamente, se mancanti:
 - `forge_experiments_v2`: risultati retrospettivi versionati;
 - `forge_state`: champion, challenger e modalità operativa;
 - `forge_predictions`: proposte immutabili salvate prima delle estrazioni e successivamente valutate.
+- `forge_superstar_experiments`: backtest versionati dei modelli SuperStar;
+- `forge_superstar_state`: champion e challenger SuperStar indipendenti;
+- `forge_superstar_predictions`: previsioni SuperStar prospettiche, congelate e valutate separatamente.
 
 Il file `.forge_registry_v2.json` è soltanto una cache locale. Su Streamlit Cloud può sparire al reboot e non viene usato come memoria autorevole.
 

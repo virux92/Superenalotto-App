@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.testdeps/
 .forge_registry*.json
 .streamlit/secrets.toml
 .DS_Store

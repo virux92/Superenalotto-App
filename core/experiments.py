@@ -201,6 +201,19 @@ def run_nested_orion_validation(
     scelta e serve soltanto a decidere se il candidato può entrare in shadow.
     """
     candidates = tuple(profiles)
+    # Compatibilità pubblica: FORGE v3 usa lo stesso punto d'ingresso ma passa
+    # contratti ModelSpec. I vecchi StrategyProfile continuano a seguire il
+    # percorso ORION a soli pesi, utile per audit e test di regressione.
+    if candidates and hasattr(candidates[0], "family"):
+        from core.model_validation import run_nested_model_validation
+
+        return run_nested_model_validation(
+            raw_records,
+            candidates,
+            development_limit=development_limit,
+            holdout_limit=holdout_limit,
+            random_seed=random_seed,
+        )
     if not candidates:
         raise ValueError("FORGE richiede almeno un modello challenger.")
     if len({profile.name for profile in candidates}) != len(candidates):

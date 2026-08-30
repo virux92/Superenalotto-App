@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+from pathlib import Path
 from typing import Iterator, Mapping
 
 import pandas as pd
@@ -1065,6 +1066,308 @@ def fetch_evaluated_forge_predictions(
                       (target_date + time '20:00') at time zone 'Europe/Rome'
                   )
                 order by source_date, role
+                """,
+                (str(forge_version),),
+            )
+            rows = cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+@st.cache_resource(show_spinner=False)
+def ensure_forge_v3_tables() -> None:
+    """Applica la migrazione additiva FORGE 3 in modo idempotente."""
+    ensure_forge_v2_tables()
+    migration = Path(__file__).with_name("FORGE_V3_SUPABASE.sql").read_text(
+        encoding="utf-8"
+    )
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(migration)
+        connection.commit()
+
+
+def save_forge_superstar_experiment(record: Mapping[str, object]) -> dict[str, str]:
+    ensure_forge_v3_tables()
+    metrics = {
+        key: value
+        for key, value in record.items()
+        if key
+        not in {
+            "experiment_key", "archive_signature", "forge_version", "model_id",
+            "label", "family", "configuration", "selected_for_holdout",
+        }
+    }
+    query = """
+        insert into public.forge_superstar_experiments (
+            experiment_key, archive_signature, forge_version, model_id,
+            label, family, selected_for_holdout, configuration, metrics
+        ) values (
+            %(experiment_key)s, %(archive_signature)s, %(forge_version)s,
+            %(model_id)s, %(label)s, %(family)s, %(selected_for_holdout)s,
+            %(configuration)s::jsonb, %(metrics)s::jsonb
+        )
+        on conflict (experiment_key) do update set
+            label = excluded.label,
+            family = excluded.family,
+            selected_for_holdout = excluded.selected_for_holdout,
+            configuration = excluded.configuration,
+            metrics = excluded.metrics,
+            updated_at = now()
+        returning experiment_key
+    """
+    payload = {
+        "experiment_key": str(record["experiment_key"]),
+        "archive_signature": str(record["archive_signature"]),
+        "forge_version": str(record["forge_version"]),
+        "model_id": str(record["model_id"]),
+        "label": str(record["label"]),
+        "family": str(record["family"]),
+        "selected_for_holdout": bool(record.get("selected_for_holdout", False)),
+        "configuration": json.dumps(record.get("configuration", {}), default=str),
+        "metrics": json.dumps(metrics, default=str),
+    }
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(query, payload)
+            saved = cursor.fetchone()
+        connection.commit()
+    return {"experiment_key": str(saved["experiment_key"])}
+
+
+def fetch_forge_superstar_experiments(
+    archive_signature: str, forge_version: str
+) -> list[dict[str, object]]:
+    ensure_forge_v3_tables()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select experiment_key, archive_signature, forge_version,
+                       model_id, label, family, selected_for_holdout,
+                       configuration, metrics, created_at, updated_at
+                from public.forge_superstar_experiments
+                where archive_signature = %s and forge_version = %s
+                order by selected_for_holdout desc, model_id
+                """,
+                (str(archive_signature), str(forge_version)),
+            )
+            rows = cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+def fetch_forge_superstar_state() -> dict[str, object] | None:
+    ensure_forge_v3_tables()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select id, mode, champion_model, challenger_model,
+                       prospective_minimum, note, updated_at
+                from public.forge_superstar_state where id = 1
+                """
+            )
+            row = cursor.fetchone()
+    return None if row is None else dict(row)
+
+
+def save_forge_superstar_state(record: Mapping[str, object]) -> dict[str, object]:
+    ensure_forge_v3_tables()
+    challenger = record.get("challenger_model")
+    payload = {
+        "mode": str(record.get("mode", "shadow")),
+        "champion_model": json.dumps(record.get("champion_model", {}), default=str),
+        "challenger_model": None if challenger is None else json.dumps(challenger, default=str),
+        "prospective_minimum": max(100, int(record.get("prospective_minimum", 100))),
+        "note": record.get("note"),
+    }
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                insert into public.forge_superstar_state (
+                    id, mode, champion_model, challenger_model,
+                    prospective_minimum, note
+                ) values (
+                    1, %(mode)s, %(champion_model)s::jsonb,
+                    %(challenger_model)s::jsonb, %(prospective_minimum)s, %(note)s
+                )
+                on conflict (id) do update set
+                    mode = excluded.mode,
+                    champion_model = excluded.champion_model,
+                    challenger_model = excluded.challenger_model,
+                    prospective_minimum = excluded.prospective_minimum,
+                    note = excluded.note,
+                    updated_at = now()
+                returning mode, updated_at
+                """,
+                payload,
+            )
+            saved = cursor.fetchone()
+        connection.commit()
+    return dict(saved)
+
+
+def save_forge_superstar_prediction(record: Mapping[str, object]) -> dict[str, object]:
+    ensure_forge_v3_tables()
+    predicted = int(record["predicted_superstar"])
+    if not 1 <= predicted <= 90:
+        raise ValueError("Il SuperStar previsto deve essere compreso tra 1 e 90.")
+    payload = {
+        "prediction_key": str(record["prediction_key"]),
+        "archive_signature": str(record["archive_signature"]),
+        "forge_version": str(record["forge_version"]),
+        "source_year": int(record["source_year"]),
+        "source_contest": int(record["source_contest"]),
+        "source_date": record["source_date"],
+        "role": str(record["role"]),
+        "model_id": str(record["model_id"]),
+        "model_config": json.dumps(record.get("model_config", {}), default=str),
+        "predicted_superstar": predicted,
+    }
+    reactivate = """
+        update public.forge_superstar_predictions as prediction
+        set archive_signature = %(archive_signature)s,
+            forge_version = %(forge_version)s,
+            source_year = %(source_year)s,
+            source_contest = %(source_contest)s,
+            source_date = %(source_date)s,
+            role = %(role)s,
+            model_id = %(model_id)s,
+            model_config = %(model_config)s::jsonb,
+            predicted_superstar = %(predicted_superstar)s,
+            status = 'pending', target_year = null, target_contest = null,
+            target_date = null, target_superstar = null, superstar_hit = null,
+            evaluated_at = null, created_at = now()
+        where prediction.prediction_key = %(prediction_key)s
+          and prediction.status = 'void'
+          and not exists (
+              select 1 from public.forge_superstar_predictions active
+              where active.status = 'pending'
+                and active.forge_version = %(forge_version)s
+                and active.source_year = %(source_year)s
+                and active.source_contest = %(source_contest)s
+                and active.role = %(role)s
+          )
+        returning prediction_key
+    """
+    insert = """
+        insert into public.forge_superstar_predictions (
+            prediction_key, archive_signature, forge_version,
+            source_year, source_contest, source_date,
+            role, model_id, model_config, predicted_superstar
+        ) values (
+            %(prediction_key)s, %(archive_signature)s, %(forge_version)s,
+            %(source_year)s, %(source_contest)s, %(source_date)s,
+            %(role)s, %(model_id)s, %(model_config)s::jsonb, %(predicted_superstar)s
+        ) on conflict do nothing returning prediction_key
+    """
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(reactivate, payload)
+            saved = cursor.fetchone()
+            if saved is None:
+                cursor.execute(insert, payload)
+                saved = cursor.fetchone()
+        connection.commit()
+    return {"prediction_key": str(record["prediction_key"]), "inserted": saved is not None}
+
+
+def fetch_pending_forge_superstar_predictions(forge_version: str) -> list[dict[str, object]]:
+    ensure_forge_v3_tables()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select prediction_key, archive_signature, forge_version,
+                       source_year, source_contest, source_date, role, model_id,
+                       model_config, predicted_superstar, status, created_at
+                from public.forge_superstar_predictions
+                where status = 'pending' and forge_version = %s
+                order by source_date, created_at
+                """,
+                (str(forge_version),),
+            )
+            rows = cursor.fetchall()
+    return [dict(row) for row in rows]
+
+
+def void_obsolete_pending_forge_superstar_predictions(
+    *, forge_version: str, source_year: int, source_contest: int,
+    keep_prediction_keys: list[str] | tuple[str, ...],
+) -> list[dict[str, object]]:
+    ensure_forge_v3_tables()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                update public.forge_superstar_predictions
+                set status = 'void', target_year = null, target_contest = null,
+                    target_date = null, target_superstar = null,
+                    superstar_hit = null, evaluated_at = null
+                where status = 'pending' and forge_version = %s
+                  and source_year = %s and source_contest = %s
+                  and not (prediction_key = any(%s))
+                returning prediction_key, role, model_id
+                """,
+                (str(forge_version), int(source_year), int(source_contest), [str(key) for key in keep_prediction_keys]),
+            )
+            rows = cursor.fetchall()
+        connection.commit()
+    return [dict(row) for row in rows]
+
+
+def evaluate_forge_superstar_prediction(
+    prediction_key: str, *, target_year: int, target_contest: int,
+    target_date: object, target_superstar: int, superstar_hit: bool,
+) -> dict[str, str]:
+    ensure_forge_v3_tables()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                update public.forge_superstar_predictions
+                set status = 'evaluated', target_year = %s, target_contest = %s,
+                    target_date = %s, target_superstar = %s, superstar_hit = %s,
+                    evaluated_at = now()
+                where prediction_key = %s and status = 'pending'
+                  and created_at < ((%s::date + time '20:00') at time zone 'Europe/Rome')
+                returning prediction_key
+                """,
+                (int(target_year), int(target_contest), target_date, int(target_superstar), bool(superstar_hit), str(prediction_key), target_date),
+            )
+            saved = cursor.fetchone()
+            if saved is None:
+                cursor.execute(
+                    """
+                    update public.forge_superstar_predictions
+                    set status = 'void', target_year = null, target_contest = null,
+                        target_date = null, target_superstar = null,
+                        superstar_hit = null, evaluated_at = null
+                    where prediction_key = %s and status = 'pending'
+                    returning prediction_key
+                    """,
+                    (str(prediction_key),),
+                )
+                cursor.fetchone()
+        connection.commit()
+    return {"prediction_key": str(saved["prediction_key"])} if saved else {}
+
+
+def fetch_evaluated_forge_superstar_predictions(forge_version: str) -> list[dict[str, object]]:
+    ensure_forge_v3_tables()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select prediction_key, archive_signature, forge_version,
+                       source_year, source_contest, source_date, role, model_id,
+                       model_config, predicted_superstar, target_year,
+                       target_contest, target_date, target_superstar,
+                       superstar_hit, created_at, evaluated_at
+                from public.forge_superstar_predictions
+                where status = 'evaluated' and forge_version = %s
+                  and created_at < ((target_date + time '20:00') at time zone 'Europe/Rome')
+                order by target_date, source_date, role
                 """,
                 (str(forge_version),),
             )
