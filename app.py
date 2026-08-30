@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +40,7 @@ from ui.orion_ui import (
     render_number_balls,
 )
 
-APP_TITLE = "ORION v2.7.5.1 — SuperEnalotto Quant Engine"
+APP_TITLE = "ORION v2.7.5.2 — SuperEnalotto Quant Engine"
 DATA_FILE = Path(__file__).with_name("estrazioni.csv")
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🌌", layout="wide")
@@ -691,8 +691,7 @@ def render_archive_tab(archive: pd.DataFrame, database_available: bool) -> None:
             )
         else:
             latest = archive.sort_values(["data", "concorso"]).iloc[-1]
-            earliest_next = pd.Timestamp(latest["data"]).date() + timedelta(days=1)
-            suggested_date = max(earliest_next, date.today())
+            suggested_date = date.today()
             suggested_contest = (
                 int(latest["concorso"]) + 1
                 if suggested_date.year == int(latest["anno"])
@@ -702,7 +701,9 @@ def render_archive_tab(archive: pd.DataFrame, database_available: bool) -> None:
             with st.form("add_draw_form", clear_on_submit=False):
                 identity_columns = st.columns(2)
                 draw_date = identity_columns[0].date_input(
-                    "Data estrazione", value=suggested_date
+                    "Data estrazione",
+                    value=suggested_date,
+                    max_value=date.today(),
                 )
                 contest = int(
                     identity_columns[1].number_input(
@@ -760,7 +761,7 @@ def render_archive_tab(archive: pd.DataFrame, database_available: bool) -> None:
                         (validated_archive["anno"] == draw_date.year)
                         & (validated_archive["concorso"] == contest)
                     ].iloc[0]
-                    upsert_draw(new_row.to_dict(), source="inserimento_app_v2_7_5")
+                    upsert_draw(new_row.to_dict(), source="inserimento_app_v2_7_5_2")
                 except Exception as exc:
                     st.error(str(exc))
                 else:
@@ -799,6 +800,7 @@ def render_archive_tab(archive: pd.DataFrame, database_available: bool) -> None:
                 draw_date = st.date_input(
                     "Data estrazione",
                     value=pd.Timestamp(selected["data"]).date(),
+                    max_value=date.today(),
                     key=f"edit_draw_date_{selected_year}_{selected_contest}",
                 )
                 current_numbers = [
@@ -861,7 +863,7 @@ def render_archive_tab(archive: pd.DataFrame, database_available: bool) -> None:
                         & (corrected_archive["concorso"] == selected_contest)
                     ].iloc[0]
                     upsert_draw(
-                        corrected_row.to_dict(), source="correzione_app_v2_7_5"
+                        corrected_row.to_dict(), source="correzione_app_v2_7_5_2"
                     )
                 except Exception as exc:
                     st.error(str(exc))

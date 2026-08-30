@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.7.5.2 — Integrità temporale prospettica
+
+- Bloccati inserimenti e correzioni con data futura nell'app e direttamente in PostgreSQL.
+- Il cutoff prospettico usa l'orario ufficiale delle 20:00 in `Europe/Rome`: soltanto snapshot realmente registrati prima dell'estrazione target entrano nei conteggi.
+- Le previsioni tardive vengono neutralizzate a `void` durante la valutazione; un secondo filtro sulle letture protegge anche lo storico precedente alla patch.
+- La riattivazione di righe `void` aggiorna `created_at`, impedendo che un timestamp storico renda prospettica una registrazione tardiva.
+- Le correzioni della sola data riallineano l'audit FORGE senza invalidare output numerici non dipendenti dalla data errata.
+- Corrette nel database live le date ufficiali dei concorsi 130–135/2026; la sola coppia falsa 131→132 è stata esclusa dal campione.
+- Versione visibile `2.7.5.2`; ORION `2.7.4`, FORGE `2.0.0`, pesi, scoring, promozione e `prospective_minimum = 100` invariati.
+- Suite: 63 test superati.
+
 ## 2.7.5.1 — Correzioni prospettiche e SuperStar FORGE
 
 - Persistito il SuperStar calcolato al momento della previsione e valutato senza alterare scoring o promozioni.
