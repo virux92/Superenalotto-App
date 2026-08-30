@@ -108,6 +108,9 @@ def test_forge_setup_is_repeatable_and_contains_idempotent_superstar_upgrade() -
     assert "add column if not exists predicted_superstar" in first_run_sql
     assert "add column if not exists target_superstar" in first_run_sql
     assert "add column if not exists superstar_hit" in first_run_sql
+    assert "create or replace function public.validate_draw_temporal_integrity" in first_run_sql
+    assert "trg_validate_draw_temporal_integrity" in first_run_sql
+    assert "clock_timestamp() at time zone 'europe/rome'" in first_run_sql
     assert "create or replace function public.invalidate_forge_predictions_on_draw_change" in first_run_sql
     assert (
         "public.invalidate_forge_predictions_on_draw_change()\n        from public, anon, authenticated"
@@ -129,10 +132,13 @@ def test_install_sql_distinguishes_draw_change_types_and_preserves_evaluated_row
     assert "superstar_hit boolean null" in sql
     assert "numbers_changed boolean" in function_sql
     assert "superstar_changed boolean" in function_sql
-    assert "structure_changed boolean" in function_sql
+    assert "identity_changed boolean" in function_sql
+    assert "date_changed boolean" in function_sql
     assert "if tg_op = 'insert'" in function_sql
     assert "elsif tg_op = 'delete'" in function_sql
-    assert "if structure_changed then" in function_sql
+    assert "if identity_changed then" in function_sql
+    assert "set source_date = new.data_estrazione" in function_sql
+    assert "set target_date = new.data_estrazione" in function_sql
     assert "old.jolly" not in function_sql
     assert "new.jolly" not in function_sql
     assert "where prediction.status = 'evaluated'" in function_sql
@@ -204,3 +210,31 @@ def test_prediction_insert_preserves_a_legacy_pending_unique_conflict() -> None:
     assert "and not exists" in calls[0][0].lower()
     assert "on conflict do nothing" in calls[1][0].lower()
     assert calls[1][1]["predicted_superstar"] == 42
+    assert "created_at = now()" in calls[0][0].lower()
+
+
+def test_late_prediction_is_voided_instead_of_evaluated() -> None:
+    calls: list[tuple[str, object]] = []
+    connection = _ResultConnection(
+        calls,
+        [None, {"prediction_key": "late-prediction"}],
+    )
+
+    with patch.object(database, "ensure_forge_v2_tables"), patch.object(
+        database, "get_connection", return_value=connection
+    ):
+        result = database.evaluate_forge_prediction(
+            "late-prediction",
+            target_year=2026,
+            target_contest=132,
+            target_date="2026-08-18",
+            hits=6,
+            target_superstar=6,
+            superstar_hit=True,
+        )
+
+    assert result == {}
+    assert len(calls) == 2
+    assert "time '20:00'" in calls[0][0].lower()
+    assert "status = 'void'" in calls[1][0].lower()
+    assert calls[0][1][-1] == "2026-08-18"

@@ -509,6 +509,37 @@ def ensure_forge_v2_tables() -> None:
         alter column prospective_minimum set default 100
         """,
         """
+        create or replace function public.validate_draw_temporal_integrity()
+        returns trigger
+        language plpgsql
+        set search_path = public
+        as $$
+        begin
+            if new.data_estrazione > (clock_timestamp() at time zone 'Europe/Rome')::date then
+                raise exception
+                    'La data estrazione % e futura rispetto alla data italiana corrente.',
+                    new.data_estrazione
+                    using errcode = '22007';
+            end if;
+            return new;
+        end;
+        $$
+        """,
+        """
+        revoke execute on function public.validate_draw_temporal_integrity()
+        from public, anon, authenticated
+        """,
+        """
+        drop trigger if exists trg_validate_draw_temporal_integrity
+        on public.estrazioni
+        """,
+        """
+        create trigger trg_validate_draw_temporal_integrity
+        before insert or update of data_estrazione on public.estrazioni
+        for each row
+        execute function public.validate_draw_temporal_integrity()
+        """,
+        """
         create or replace function public.invalidate_forge_predictions_on_draw_change()
         returns trigger
         language plpgsql
@@ -520,7 +551,8 @@ def ensure_forge_v2_tables() -> None:
             previous_max date;
             numbers_changed boolean;
             superstar_changed boolean;
-            structure_changed boolean;
+            identity_changed boolean;
+            date_changed boolean;
         begin
             if tg_op = 'INSERT' then
                 select max(data_estrazione)
@@ -535,11 +567,9 @@ def ensure_forge_v2_tables() -> None:
             elsif tg_op = 'DELETE' then
                 cutoff_date := old.data_estrazione;
             else
-                structure_changed := row(
-                    old.data_estrazione, old.anno, old.concorso
-                ) is distinct from row(
-                    new.data_estrazione, new.anno, new.concorso
-                );
+                identity_changed := row(old.anno, old.concorso)
+                    is distinct from row(new.anno, new.concorso);
+                date_changed := old.data_estrazione is distinct from new.data_estrazione;
                 numbers_changed := row(
                     old.n1, old.n2, old.n3, old.n4, old.n5, old.n6
                 ) is distinct from row(
@@ -547,9 +577,24 @@ def ensure_forge_v2_tables() -> None:
                 );
                 superstar_changed := old.superstar is distinct from new.superstar;
 
-                if structure_changed then
+                if identity_changed then
                     cutoff_date := least(old.data_estrazione, new.data_estrazione);
                 else
+                    if date_changed then
+                        -- La data non entra nello scoring: riallinea l'audit senza
+                        -- invalidare previsioni numericamente indipendenti dall'errore.
+                        update public.forge_predictions
+                        set source_date = new.data_estrazione
+                        where source_year = old.anno
+                          and source_contest = old.concorso;
+
+                        update public.forge_predictions
+                        set target_date = new.data_estrazione
+                        where status = 'evaluated'
+                          and target_year = old.anno
+                          and target_contest = old.concorso;
+                    end if;
+
                     -- Jolly e campi non predittivi non toccano FORGE.
                     if not numbers_changed and not superstar_changed then
                         return new;
@@ -806,7 +851,8 @@ def save_forge_prediction(record: Mapping[str, object]) -> dict[str, object]:
             hits = null,
             target_superstar = null,
             superstar_hit = null,
-            evaluated_at = null
+            evaluated_at = null,
+            created_at = now()
         where prediction.prediction_key = %(prediction_key)s
           and prediction.status = 'void'
           and not exists (
@@ -954,6 +1000,22 @@ def evaluate_forge_prediction(
             superstar_hit = %s,
             evaluated_at = now()
         where prediction_key = %s and status = 'pending'
+          and created_at < ((%s::date + time '20:00') at time zone 'Europe/Rome')
+        returning prediction_key
+    """
+    invalidate_late_query = """
+        update public.forge_predictions
+        set status = 'void',
+            target_year = null,
+            target_contest = null,
+            target_date = null,
+            hits = null,
+            target_superstar = null,
+            superstar_hit = null,
+            evaluated_at = null
+        where prediction_key = %s
+          and status = 'pending'
+          and created_at >= ((%s::date + time '20:00') at time zone 'Europe/Rome')
         returning prediction_key
     """
     with get_connection() as connection:
@@ -968,9 +1030,16 @@ def evaluate_forge_prediction(
                     None if target_superstar is None else int(target_superstar),
                     superstar_hit,
                     str(prediction_key),
+                    target_date,
                 ),
             )
             saved = cursor.fetchone()
+            if saved is None:
+                cursor.execute(
+                    invalidate_late_query,
+                    (str(prediction_key), target_date),
+                )
+                cursor.fetchone()
         connection.commit()
     return {"prediction_key": str(saved["prediction_key"])} if saved else {}
 
@@ -988,9 +1057,13 @@ def fetch_evaluated_forge_predictions(
                        source_year, source_contest, source_date,
                        target_year, target_contest, target_date, hits,
                        predicted_superstar, target_superstar, superstar_hit,
-                       model_config, evaluated_at
+                       model_config, created_at, evaluated_at
                 from public.forge_predictions
-                where status = 'evaluated' and forge_version = %s
+                where status = 'evaluated'
+                  and forge_version = %s
+                  and created_at < (
+                      (target_date + time '20:00') at time zone 'Europe/Rome'
+                  )
                 order by source_date, role
                 """,
                 (str(forge_version),),

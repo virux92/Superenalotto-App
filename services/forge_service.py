@@ -26,6 +26,32 @@ from core.orion import DEFAULT_POLICY, generate_orion_proposal
 from services.draw_service import dataframe_to_history
 
 REGISTRY_FILE = Path(__file__).resolve().parents[1] / ".forge_registry_v2.json"
+TARGET_EXTRACTION_TIMEZONE = "Europe/Rome"
+TARGET_EXTRACTION_HOUR = 20
+
+
+def _registered_before_target_extraction(
+    created_at: object,
+    target_date: object,
+) -> bool:
+    """Verifica il requisito temporale usando le 20:00 italiane del target.
+
+    L'archivio conserva il giorno dell'estrazione, mentre `created_at` conserva
+    l'istante reale di registrazione. Il confronto con il cutoff ufficiale evita
+    che un target inserito in anticipo o con una data futura produca look-ahead.
+    """
+    if created_at is None or target_date is None:
+        return False
+
+    registered = pd.Timestamp(created_at)
+    if registered.tzinfo is None:
+        registered = registered.tz_localize("UTC")
+    target_day = pd.Timestamp(target_date).date().isoformat()
+    cutoff = pd.Timestamp(
+        f"{target_day} {TARGET_EXTRACTION_HOUR:02d}:00:00",
+        tz=TARGET_EXTRACTION_TIMEZONE,
+    )
+    return bool(registered < cutoff)
 
 
 def _archive_columns_signature(archive: pd.DataFrame, columns: list[str]) -> str:
@@ -198,6 +224,10 @@ def _paired_prospective_results(
 
     grouped: dict[tuple[str, int, int, int, int], dict[str, dict[str, Any]]] = {}
     for row in rows:
+        if not _registered_before_target_extraction(
+            row.get("created_at"), row.get("target_date")
+        ):
+            continue
         role = str(row["role"])
         model_id = str(row["model_id"])
         if role == "champion" and model_id != champion_model_id:

@@ -17,7 +17,9 @@ class ArchiveServiceTests(unittest.TestCase):
 
     def test_unsorted_numbers_are_rejected(self) -> None:
         frame = synthetic_archive(10)
-        frame.loc[0, ["n1", "n2"]] = frame.loc[0, ["n2", "n1"]].to_numpy()
+        original_n1 = int(frame.loc[0, "n1"])
+        original_n2 = int(frame.loc[0, "n2"])
+        frame.loc[0, ["n1", "n2"]] = [original_n2, original_n1]
         with self.assertRaisesRegex(ValueError, "ordine crescente"):
             normalize_archive_dataframe(frame)
 

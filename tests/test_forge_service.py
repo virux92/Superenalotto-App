@@ -98,6 +98,11 @@ def _fake_database_module() -> types.ModuleType:
             }
         activated = existing is None or existing.get("status") == "void"
         if activated:
+            created_at = (
+                pd.Timestamp(record["source_date"])
+                .tz_localize("Europe/Rome")
+                .replace(hour=12)
+            )
             module.predictions[record["prediction_key"]] = {
                 **dict(record),
                 **{f"n{i}": sorted(record["numbers"])[i - 1] for i in range(1, 7)},
@@ -109,6 +114,7 @@ def _fake_database_module() -> types.ModuleType:
                 "predicted_superstar": record.get("predicted_superstar"),
                 "target_superstar": None,
                 "superstar_hit": None,
+                "created_at": created_at,
             }
         return {
             "prediction_key": record["prediction_key"],
@@ -645,3 +651,58 @@ def test_historical_null_predicted_superstar_stays_unknown(
     assert all(value["superstar_hit"] is None for value in evaluated)
     assert result["prospective"]["count"] == 1
     assert result["superstar"] == {"count": 0, "hits": 0, "hit_rate": 0.0}
+
+
+def test_temporal_cutoff_excludes_prediction_registered_after_target(monkeypatch) -> None:
+    module = types.ModuleType("database")
+    common = {
+        "archive_signature": "same-snapshot",
+        "forge_version": "2.0.0",
+        "source_year": 2026,
+        "source_contest": 131,
+        "source_date": "2026-08-17",
+        "target_year": 2026,
+        "target_contest": 132,
+        "target_date": "2026-08-18",
+        "hits": 0,
+        "predicted_superstar": 11,
+        "target_superstar": 6,
+        "superstar_hit": False,
+    }
+    module.fetch_evaluated_forge_predictions = lambda _version: [
+        {
+            **common,
+            "prediction_key": "champion-late",
+            "role": "champion",
+            "model_id": "champion",
+            "created_at": "2026-08-19T08:51:36Z",
+        },
+        {
+            **common,
+            "prediction_key": "challenger-late",
+            "role": "challenger",
+            "model_id": "challenger",
+            "created_at": "2026-08-19T08:51:37Z",
+        },
+    ]
+    monkeypatch.setitem(sys.modules, "database", module)
+
+    pairs, error = forge_service._paired_prospective_results(
+        "champion", "challenger"
+    )
+
+    assert error is None
+    assert pairs == []
+
+
+def test_temporal_cutoff_uses_official_20_rome_boundary() -> None:
+    target = "2026-08-18"
+    assert forge_service._registered_before_target_extraction(
+        "2026-08-18T17:59:59Z", target
+    )
+    assert not forge_service._registered_before_target_extraction(
+        "2026-08-18T18:00:00Z", target
+    )
+    assert not forge_service._registered_before_target_extraction(
+        "2026-08-19T08:51:36Z", target
+    )

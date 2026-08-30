@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 import unittest
 
 from services.draw_service import add_extraction, update_extraction
@@ -108,6 +108,34 @@ class DrawServiceTests(unittest.TestCase):
                 [10, 20, 30, 40, 50, 60],
                 70,
                 80,
+            )
+
+    def test_add_extraction_rejects_future_date(self) -> None:
+        frame = synthetic_archive(30)
+        with self.assertRaisesRegex(ValueError, "data futura"):
+            add_extraction(
+                frame,
+                date(2026, 8, 31),
+                31,
+                [10, 20, 30, 40, 50, 60],
+                70,
+                80,
+                today=date(2026, 8, 30),
+            )
+
+    def test_update_extraction_rejects_future_date(self) -> None:
+        frame = synthetic_archive(30)
+        target = frame.iloc[-1]
+        with self.assertRaisesRegex(ValueError, "data futura"):
+            update_extraction(
+                frame,
+                int(target["anno"]),
+                int(target["concorso"]),
+                date(2026, 8, 31),
+                [10, 20, 30, 40, 50, 60],
+                70,
+                80,
+                today=date(2026, 8, 30),
             )
 
     def test_update_rejects_date_before_previous_contest(self) -> None:

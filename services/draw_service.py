@@ -82,8 +82,17 @@ def add_extraction(
     numbers: list[int],
     jolly: int | None,
     superstar: int,
+    *,
+    today: date | None = None,
 ) -> pd.DataFrame:
     """Aggiunge una nuova estrazione alla sessione dopo controlli completi."""
+    current_date = date.today() if today is None else today
+    if draw_date > current_date:
+        raise ValueError(
+            "Non è possibile inserire un'estrazione con una data futura "
+            f"({draw_date:%d/%m/%Y})."
+        )
+
     year = draw_date.year
     if ((dataframe["anno"] == year) & (dataframe["concorso"] == contest)).any():
         raise ValueError(f"Il concorso {contest} del {year} è già presente.")
@@ -137,8 +146,17 @@ def update_extraction(
     numbers: list[int],
     jolly: int | None,
     superstar: int,
+    *,
+    today: date | None = None,
 ) -> pd.DataFrame:
     """Corregge un concorso esistente senza cambiarne anno e numero."""
+    current_date = date.today() if today is None else today
+    if draw_date > current_date:
+        raise ValueError(
+            "Non è possibile assegnare a un'estrazione una data futura "
+            f"({draw_date:%d/%m/%Y})."
+        )
+
     year = int(year)
     contest = int(contest)
     mask = (dataframe["anno"] == year) & (dataframe["concorso"] == contest)

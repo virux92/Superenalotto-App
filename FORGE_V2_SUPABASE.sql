@@ -89,6 +89,33 @@ where prospective_minimum < 100;
 alter table public.forge_state
 alter column prospective_minimum set default 100;
 
+create or replace function public.validate_draw_temporal_integrity()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+    if new.data_estrazione > (clock_timestamp() at time zone 'Europe/Rome')::date then
+        raise exception
+            'La data estrazione % e futura rispetto alla data italiana corrente.',
+            new.data_estrazione
+            using errcode = '22007';
+    end if;
+    return new;
+end;
+$$;
+
+revoke execute on function public.validate_draw_temporal_integrity()
+from public, anon, authenticated;
+
+drop trigger if exists trg_validate_draw_temporal_integrity
+on public.estrazioni;
+
+create trigger trg_validate_draw_temporal_integrity
+before insert or update of data_estrazione on public.estrazioni
+for each row
+execute function public.validate_draw_temporal_integrity();
+
 create or replace function public.invalidate_forge_predictions_on_draw_change()
 returns trigger
 language plpgsql
@@ -100,7 +127,8 @@ declare
     previous_max date;
     numbers_changed boolean;
     superstar_changed boolean;
-    structure_changed boolean;
+    identity_changed boolean;
+    date_changed boolean;
 begin
     if tg_op = 'INSERT' then
         select max(data_estrazione)
@@ -115,11 +143,9 @@ begin
     elsif tg_op = 'DELETE' then
         cutoff_date := old.data_estrazione;
     else
-        structure_changed := row(
-            old.data_estrazione, old.anno, old.concorso
-        ) is distinct from row(
-            new.data_estrazione, new.anno, new.concorso
-        );
+        identity_changed := row(old.anno, old.concorso)
+            is distinct from row(new.anno, new.concorso);
+        date_changed := old.data_estrazione is distinct from new.data_estrazione;
         numbers_changed := row(
             old.n1, old.n2, old.n3, old.n4, old.n5, old.n6
         ) is distinct from row(
@@ -127,9 +153,24 @@ begin
         );
         superstar_changed := old.superstar is distinct from new.superstar;
 
-        if structure_changed then
+        if identity_changed then
             cutoff_date := least(old.data_estrazione, new.data_estrazione);
         else
+            if date_changed then
+                -- La data non entra nello scoring: riallinea l'audit senza
+                -- invalidare previsioni numericamente indipendenti dall'errore.
+                update public.forge_predictions
+                set source_date = new.data_estrazione
+                where source_year = old.anno
+                  and source_contest = old.concorso;
+
+                update public.forge_predictions
+                set target_date = new.data_estrazione
+                where status = 'evaluated'
+                  and target_year = old.anno
+                  and target_contest = old.concorso;
+            end if;
+
             -- Jolly e campi non predittivi non toccano FORGE.
             if not numbers_changed and not superstar_changed then
                 return new;
